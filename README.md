@@ -15,10 +15,12 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 | 0 | Environment audit | ✅ Done |
 | 1 | Foundation: structure, config, PostgreSQL, migrations, logging, health check, tests | ✅ Done |
 | 2 | Market data: provider interface, yfinance SPY daily, NYSE calendar, validation, storage | ✅ Done |
-| 3–15 | Candles, price action, indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
+| 3 | Candlestick Engine: candle geometry + 20 pattern detectors (observations, not signals) | ✅ Done |
+| 4–15 | Price action, indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
 
-The platform can ingest and validate SPY daily bars. There is **no analysis, no indicators, no
-signals and no trading logic** yet.
+The platform can ingest and validate SPY daily bars and describe candle geometry and
+candlestick patterns. Patterns are **observations/hypotheses, not trading signals**. There are
+**no indicators, no signals, no strategies and no trading logic** yet.
 
 ## Principles
 
@@ -36,13 +38,14 @@ app/
 ├── core/       settings (env vars), structured logging, execution safety guard
 ├── data/       providers (DataProvider, yfinance), NYSE calendar, normalization,
 │               validation, ingestion, CLI
+├── candles/    Candlestick Engine: geometry, pattern detectors, loader, CLI
 └── database/   SQLAlchemy 2 models + session
 migrations/     Alembic migrations
 tests/          unit + integration (PostgreSQL) tests
 docs/           architecture, decisions (ADRs), methodology
 ```
 
-Modules for later phases (`candles/`, `price_action/`, …) are created only when their
+Modules for later phases (`price_action/`, …) are created only when their
 phase starts. See [docs/architecture.md](docs/architecture.md) and
 [docs/decisions.md](docs/decisions.md).
 
@@ -81,6 +84,14 @@ uv run python -m app.data.cli ingest --symbol SPY --start 1993-01-01   # --end d
 
 Re-running is idempotent. See [docs/market-data.md](docs/market-data.md) for price semantics,
 session normalization and the data-quality checks.
+
+Describe candlestick patterns on stored bars (descriptive counts, no predictive claim):
+
+```bash
+uv run python -m app.candles.cli scan --symbol SPY
+```
+
+Definitions and point-in-time guarantees: [docs/candlestick-engine.md](docs/candlestick-engine.md).
 
 `/health` returns `200` with `"database": {"status": "ok"}` when PostgreSQL is reachable, and
 `503` with `"status": "degraded"` when it is not.
@@ -128,7 +139,8 @@ mandatory no-trade conditions. Paper trading only until full validation.
 
 ## Limitations
 
-- Only SPY daily bars from yfinance; no analysis exists yet.
+- Only SPY daily bars from yfinance.
+- Candlestick patterns are unvalidated hypotheses; their thresholds are conventions.
 - yfinance is unsuitable for production and limits intraday history.
 - Past performance in a backtest does not predict future results.
 

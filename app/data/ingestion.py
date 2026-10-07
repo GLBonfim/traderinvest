@@ -141,7 +141,9 @@ def upsert_sessions(session: Session, calendar: TradingCalendar, sessions: pd.Da
     )
     changed = 0
     for chunk_start in range(0, len(rows), 2000):
-        result = session.execute(stmt.returning(MarketSession.id), rows[chunk_start : chunk_start + 2000])
+        result = session.execute(
+            stmt.returning(MarketSession.id), rows[chunk_start : chunk_start + 2000]
+        )
         changed += len(result.all())
     return changed
 
@@ -178,8 +180,13 @@ def _persist_bars(
         old = existing.get(ts_dt)
         if old is None:
             to_insert.append(
-                {"instrument_id": instrument_id, "provider": provider, "timeframe": TIMEFRAME,
-                 "ts": ts_dt, **new}
+                {
+                    "instrument_id": instrument_id,
+                    "provider": provider,
+                    "timeframe": TIMEFRAME,
+                    "ts": ts_dt,
+                    **new,
+                }
             )
             continue
 
@@ -202,13 +209,19 @@ def _persist_bars(
                     description="Provider changed raw OHLCV of a closed bar; new values stored.",
                     action_taken=UPDATED,
                     bar_ts=ts_dt,
-                    details={c: {"old": str(getattr(old, c)), "new": str(new[c])} for c in raw_changed},
+                    details={
+                        c: {"old": str(getattr(old, c)), "new": str(new[c])} for c in raw_changed
+                    },
                 )
             )
-        elif old.is_closed and adj_changed and not raw_changed:
-            if old.adj_close and new["adj_close"] is not None:
-                rel = abs(new["adj_close"] / old.adj_close - 1)
-                adj_restated.append((ts_dt, rel))
+        elif (
+            old.is_closed
+            and adj_changed
+            and not raw_changed
+            and old.adj_close
+            and new["adj_close"] is not None
+        ):
+            adj_restated.append((ts_dt, abs(new["adj_close"] / old.adj_close - 1)))
 
         for col, value in new.items():
             setattr(old, col, value)
@@ -227,7 +240,8 @@ def _persist_bars(
             DataQualityIssue(
                 check_name="adj_close_restated",
                 severity="info",
-                description="Provider restated adj_close of closed bars (expected after dividends).",
+                description="Provider restated adj_close of closed bars (expected after "
+                "dividends).",
                 action_taken=UPDATED,
                 details={
                     "bars": len(adj_restated),
@@ -299,8 +313,15 @@ def ingest_daily_bars(
     session.add(run)
     session.commit()
     result = IngestionResult(run_id=run.id, status="running")
-    log.info("ingestion.started", run_id=run.id, provider=provider.name, symbol=spec.symbol,
-             start=start.isoformat(), end=end.isoformat(), as_of=as_of.isoformat())
+    log.info(
+        "ingestion.started",
+        run_id=run.id,
+        provider=provider.name,
+        symbol=spec.symbol,
+        start=start.isoformat(),
+        end=end.isoformat(),
+        as_of=as_of.isoformat(),
+    )
 
     try:
         bars = provider.fetch_bars(provider_symbol, TIMEFRAME, start, end)
@@ -316,7 +337,9 @@ def ingest_daily_bars(
             1 for i in normalized.issues if i.action_taken == EXCLUDED
         )
         result.sessions_upserted = upsert_sessions(session, calendar, expected_sessions)
-        persist_issues = _persist_bars(session, instrument.id, provider.name, validation.valid, result)
+        persist_issues = _persist_bars(
+            session, instrument.id, provider.name, validation.valid, result
+        )
         result.issues = [*normalized.issues, *validation.issues, *persist_issues]
         result.status = "succeeded"
     except ProviderError as exc:
@@ -342,7 +365,13 @@ def ingest_daily_bars(
         raise
 
     _record_issues(session, run, instrument.id, result.issues)
-    for attr in ("bars_received", "bars_inserted", "bars_updated", "bars_unchanged", "bars_excluded"):
+    for attr in (
+        "bars_received",
+        "bars_inserted",
+        "bars_updated",
+        "bars_unchanged",
+        "bars_excluded",
+    ):
         setattr(run, attr, getattr(result, attr))
     run.issues_count = len(result.issues)
     run.status = result.status

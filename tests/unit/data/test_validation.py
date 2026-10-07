@@ -122,7 +122,9 @@ def test_missing_sessions_are_reported(xnys: TradingCalendar) -> None:
     rows = regular_rows()
     del rows["2024-07-03"], rows["2024-07-09"]  # one interior, one trailing
     result = run(xnys, rows=rows)
-    missing = sorted(i.details["session_date"] for i in result.issues if i.check_name == "missing_session")
+    missing = sorted(
+        i.details["session_date"] for i in result.issues if i.check_name == "missing_session"
+    )
     assert missing == ["2024-07-03", "2024-07-09"]
     assert all(i.action_taken == "recorded_only" for i in result.issues)
 
@@ -148,7 +150,10 @@ def test_zero_volume_and_missing_adj_close_are_flagged(xnys: TradingCalendar) ->
     rows["2024-07-02"] = row(101, volume=0)
     rows["2024-07-08"] = (104.0, 105.0, 103.0, 104.0, float("nan"), 1_000_000)
     result = run(xnys, rows=rows)
-    assert checks(result) == [("missing_adj_close", "kept_flagged"), ("zero_volume", "kept_flagged")]
+    assert checks(result) == [
+        ("missing_adj_close", "kept_flagged"),
+        ("zero_volume", "kept_flagged"),
+    ]
     assert len(result.valid) == 6
 
 
@@ -168,7 +173,7 @@ def test_adjustment_factor_going_backwards_is_flagged(xnys: TradingCalendar) -> 
 
 def test_naive_as_of_is_rejected(xnys: TradingCalendar) -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
-        run(xnys, as_of=datetime(2024, 8, 1))  # noqa: DTZ001
+        run(xnys, as_of=datetime(2024, 8, 1))
 
 
 def test_validation_is_deterministic(xnys: TradingCalendar) -> None:

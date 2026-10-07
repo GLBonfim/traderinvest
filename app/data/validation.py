@@ -103,44 +103,71 @@ def validate_daily(
             if identical:
                 bad[idx[1:]] = True
                 issues.append(
-                    _issue("duplicate_bar", "warning", "Identical duplicate bars; one kept.",
-                           DEDUPLICATED, ts, copies=len(rows))
+                    _issue(
+                        "duplicate_bar",
+                        "warning",
+                        "Identical duplicate bars; one kept.",
+                        DEDUPLICATED,
+                        ts,
+                        copies=len(rows),
+                    )
                 )
             else:
                 bad[idx] = True
                 issues.append(
-                    _issue("conflicting_duplicate_bar", "error",
-                           "Duplicate bars with different values; all copies excluded.",
-                           EXCLUDED, ts, copies=len(rows))
+                    _issue(
+                        "conflicting_duplicate_bar",
+                        "error",
+                        "Duplicate bars with different values; all copies excluded.",
+                        EXCLUDED,
+                        ts,
+                        copies=len(rows),
+                    )
                 )
 
     def exclude(mask: np.ndarray, check: str, desc: str) -> None:
         for i in np.flatnonzero(mask & ~bad):
             row = df.iloc[int(i)]
             issues.append(
-                _issue(check, "error", desc, EXCLUDED, pd.Timestamp(df.index[int(i)]),
-                       **{c: row[c] for c in (*PRICE_COLUMNS, "adj_close", "volume")})
+                _issue(
+                    check,
+                    "error",
+                    desc,
+                    EXCLUDED,
+                    pd.Timestamp(df.index[int(i)]),
+                    **{c: row[c] for c in (*PRICE_COLUMNS, "adj_close", "volume")},
+                )
             )
         np.logical_or(bad, mask, out=bad)
 
     # 2. Missing required values.
-    exclude(df[list(REQUIRED_COLUMNS)].isna().any(axis=1).to_numpy(), "null_value",
-            "Missing open/high/low/close/volume.")
+    exclude(
+        df[list(REQUIRED_COLUMNS)].isna().any(axis=1).to_numpy(),
+        "null_value",
+        "Missing open/high/low/close/volume.",
+    )
     # 3. Non-positive prices.
-    exclude((df[list(PRICE_COLUMNS)] <= 0).any(axis=1).to_numpy(), "non_positive_price",
-            "Price <= 0.")
+    exclude(
+        (df[list(PRICE_COLUMNS)] <= 0).any(axis=1).to_numpy(), "non_positive_price", "Price <= 0."
+    )
     exclude((df["adj_close"] <= 0).to_numpy(), "non_positive_adj_close", "Adjusted close <= 0.")
     # 4. OHLC consistency.
     tol = cfg.ohlc_tolerance
     hi_bad = df["high"] + tol < df[["open", "close", "low"]].max(axis=1)
     lo_bad = df["low"] - tol > df[["open", "close", "high"]].min(axis=1)
-    exclude((hi_bad | lo_bad).to_numpy(), "ohlc_inconsistent",
-            "High below open/close/low or low above open/close/high.")
+    exclude(
+        (hi_bad | lo_bad).to_numpy(),
+        "ohlc_inconsistent",
+        "High below open/close/low or low above open/close/high.",
+    )
     # 5. Negative volume.
     exclude((df["volume"] < 0).to_numpy(), "negative_volume", "Volume < 0.")
     # 6. Bars from the future relative to the decision time (look-ahead guard).
-    exclude(np.asarray(df.index > as_of_ts), "future_bar",
-            "Bar session opens after as_of; cannot exist yet.")
+    exclude(
+        np.asarray(df.index > as_of_ts),
+        "future_bar",
+        "Bar session opens after as_of; cannot exist yet.",
+    )
 
     valid = df[~bad].copy()
     excluded = int(bad.sum())
@@ -151,15 +178,27 @@ def validate_daily(
 
     for ts in valid.index[valid["adj_close"].isna().to_numpy()]:
         issues.append(
-            _issue("missing_adj_close", "warning", "Adjusted close missing.", KEPT_FLAGGED, ts,
-                   close=valid.at[ts, "close"])
+            _issue(
+                "missing_adj_close",
+                "warning",
+                "Adjusted close missing.",
+                KEPT_FLAGGED,
+                ts,
+                close=valid.at[ts, "close"],
+            )
         )
 
     for ts in valid.index[(valid["split_ratio"].fillna(0) != 0).to_numpy()]:
         issues.append(
-            _issue("split_detected", "warning",
-                   "Split reported. Provider prices before this date are split-adjusted, "
-                   "not as-traded.", KEPT_FLAGGED, ts, split_ratio=valid.at[ts, "split_ratio"])
+            _issue(
+                "split_detected",
+                "warning",
+                "Split reported. Provider prices before this date are split-adjusted, "
+                "not as-traded.",
+                KEPT_FLAGGED,
+                ts,
+                split_ratio=valid.at[ts, "split_ratio"],
+            )
         )
 
     prev_close = valid["close"].shift(1)
@@ -167,15 +206,29 @@ def validate_daily(
     gap = valid["open"] / prev_close - 1
     for ts in valid.index[(ret.abs() > cfg.max_abs_return).to_numpy()]:
         issues.append(
-            _issue("return_outlier", "warning",
-                   f"|close-to-close return| > {cfg.max_abs_return:.0%}.", KEPT_FLAGGED, ts,
-                   ret=ret.loc[ts], prev_close=prev_close.loc[ts], close=valid.at[ts, "close"])
+            _issue(
+                "return_outlier",
+                "warning",
+                f"|close-to-close return| > {cfg.max_abs_return:.0%}.",
+                KEPT_FLAGGED,
+                ts,
+                ret=ret.loc[ts],
+                prev_close=prev_close.loc[ts],
+                close=valid.at[ts, "close"],
+            )
         )
     for ts in valid.index[(gap.abs() > cfg.max_abs_gap).to_numpy()]:
         issues.append(
-            _issue("gap_outlier", "warning", f"|open gap vs previous close| > {cfg.max_abs_gap:.0%}.",
-                   KEPT_FLAGGED, ts, gap=gap.loc[ts], prev_close=prev_close.loc[ts],
-                   open=valid.at[ts, "open"])
+            _issue(
+                "gap_outlier",
+                "warning",
+                f"|open gap vs previous close| > {cfg.max_abs_gap:.0%}.",
+                KEPT_FLAGGED,
+                ts,
+                gap=gap.loc[ts],
+                prev_close=prev_close.loc[ts],
+                open=valid.at[ts, "open"],
+            )
         )
 
     # Dividend adjustment factor must be non-decreasing forward in time.
@@ -183,9 +236,15 @@ def validate_daily(
     factor_change = factor / factor.shift(1) - 1
     for ts in valid.index[(factor_change < -cfg.adj_factor_tolerance).to_numpy()]:
         issues.append(
-            _issue("adj_factor_decrease", "warning",
-                   "adj_close/close factor decreased; inconsistent adjustment.", KEPT_FLAGGED, ts,
-                   factor=factor.loc[ts], previous_factor=factor.shift(1).loc[ts])
+            _issue(
+                "adj_factor_decrease",
+                "warning",
+                "adj_close/close factor decreased; inconsistent adjustment.",
+                KEPT_FLAGGED,
+                ts,
+                factor=factor.loc[ts],
+                previous_factor=factor.shift(1).loc[ts],
+            )
         )
 
     # Missing sessions between the first bar and the last CLOSED session we could expect.
@@ -202,9 +261,14 @@ def validate_daily(
         for d, open_utc in zip(expected.index, expected["open_utc"], strict=True):
             if d.date() not in have:
                 issues.append(
-                    _issue("missing_session", "warning",
-                           "Exchange session has no bar from the provider.", RECORDED_ONLY,
-                           open_utc, session_date=d.date())
+                    _issue(
+                        "missing_session",
+                        "warning",
+                        "Exchange session has no bar from the provider.",
+                        RECORDED_ONLY,
+                        open_utc,
+                        session_date=d.date(),
+                    )
                 )
 
     valid["is_closed"] = valid["close_utc"] <= as_of_ts

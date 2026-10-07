@@ -5,6 +5,29 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-07 — Phase 3: Candlestick Engine
+
+### Added
+- `app/candles`: `CandlestickEngine`, vectorised candle geometry (ratios, gap, relative volume,
+  past-only trend context), 20 deterministic pattern detectors with explicit thresholds in
+  `CandleConfig`, geometric `strength`, `context_requirements_met`, engine version and config
+  fingerprint.
+- Read-only loader of closed bars (raw OHLC) and `python -m app.candles.cli scan`.
+- 73 new tests (149 total): every pattern positive/negative/borderline, zero-range, invalid
+  rows, insufficient history, multiple patterns per candle, timezone/input checks,
+  determinism, point-in-time truncation and future-perturbation tests (with a leaky control),
+  SPY 2020 regression snapshot.
+- `docs/candlestick-engine.md`, ADR-0010, ADR-0011.
+
+### Fixed
+- Phase 2 files under `app/data/` and `tests/unit/data/` had never been linted/formatted by
+  ruff (ruff honours `.gitignore`, which ignored `data/` until the end of Phase 2). They are now
+  formatted and lint-clean: line wrapping, one nested `if` merged (equivalent logic), two
+  data-quality description strings reworded. No behaviour change; all Phase 2 tests unchanged.
+
+### Not included (by design)
+- No persistence of observations, signals, indicators, strategies, backtests or ML.
+
 ## [0.2.0] — 2026-10-07 — Phase 2: Market Data Foundation
 
 ### Added

@@ -63,7 +63,9 @@ class YFinanceProvider(DataProvider):
 
     def fetch_bars(self, symbol: str, timeframe: str, start: date, end: date) -> ProviderBars:
         if timeframe not in self.supported_timeframes:
-            raise UnsupportedTimeframeError(f"{self.name} supports {sorted(self.supported_timeframes)}")
+            raise UnsupportedTimeframeError(
+                f"{self.name} supports {sorted(self.supported_timeframes)}"
+            )
         if start > end:
             raise ValueError("start must be <= end")
 

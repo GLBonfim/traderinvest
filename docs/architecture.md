@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **Phase 2 — Market Data**. This document describes what exists today and the intended
+Status: **Phase 3 — Candlestick Engine**. This document describes what exists today and the intended
 direction. Components for later phases are listed as *planned* and do not exist in code yet.
 
 ## Goals
@@ -29,6 +29,9 @@ A reproducible, testable, evidence-driven research platform that can:
 │  app.data          DataProvider, YFinanceProvider, XNYS      │                 │
 │                    calendar, normalization, validation,      │                 │
 │                    ingestion, CLI  (see market-data.md)      │                 │
+│  app.candles       CandlestickEngine: geometry + detectors,  │                 │
+│                    on demand, no persistence (see            │                 │
+│                    candlestick-engine.md)                    │                 │
 │  migrations/       Alembic (URL from env, never from .ini)   │                 │
 └──────────────────────────────────────────────────────────────┼─────────────────┘
                                                                │ 127.0.0.1:5432
@@ -110,7 +113,6 @@ Created only when the corresponding phase starts:
 
 ```
 app/
-├── candles/       CandlestickEngine
 ├── price_action/  PriceActionEngine, support/resistance, breakouts
 ├── indicators/
 ├── regimes/       MarketRegimeEngine
@@ -126,7 +128,8 @@ app/
 
 ## Known limitations
 
-- No analysis, signals or trading logic exist. Market data: SPY daily from yfinance only.
+- No signals or trading logic exist. Market data: SPY daily from yfinance only.
+- Candlestick observations are computed on demand and not persisted (ADR-0010).
 - The app runs on the host; only PostgreSQL is containerised (no app Dockerfile yet).
 - No CI pipeline yet.
 - `/health` can take up to ~2× `DB_CONNECT_TIMEOUT_S` to report `503` when the DB is down

@@ -1,6 +1,6 @@
 """Command line entry point for market-data ingestion.
 
-    uv run python -m app.data.cli ingest --symbol SPY --start 1993-01-01
+uv run python -m app.data.cli ingest --symbol SPY --start 1993-01-01
 """
 
 import argparse
@@ -25,7 +25,9 @@ def main(argv: list[str] | None = None) -> int:
     ing.add_argument("--symbol", required=True)
     ing.add_argument("--provider", default="yfinance", choices=sorted(PROVIDERS))
     ing.add_argument("--start", required=True, type=date.fromisoformat)
-    ing.add_argument("--end", type=date.fromisoformat, default=None, help="inclusive; default today (UTC)")
+    ing.add_argument(
+        "--end", type=date.fromisoformat, default=None, help="inclusive; default today (UTC)"
+    )
     args = parser.parse_args(argv)
 
     settings = get_settings()

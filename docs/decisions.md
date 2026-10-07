@@ -108,6 +108,36 @@ acceptance; they are superseded by a new ADR.
 - **Consequences:** Re-runs are idempotent. Daily `ts` is comparable with future intraday bars
   (same session-open anchor). The noise tolerance must be revisited per provider.
 
+## ADR-0010 — Candlestick observations computed on demand (no persistence yet)
+
+- **Status:** Accepted (2026-10-07, Phase 3)
+- **Context:** Observations are a pure, deterministic function of (closed bars, `CandleConfig`,
+  `ENGINE_VERSION`). The full SPY history takes ~130 ms. No component consumes stored
+  observations yet; the pattern database with forward returns (outcomes) belongs to the
+  statistical-validation phase.
+- **Decision:** No tables in Phase 3. The engine is called on demand. Every analysis carries
+  `engine_version` and `config_fingerprint` so that a later persisted feature set can record
+  exact provenance (bars + provider + engine version + thresholds) in its own versioned
+  table, separate from raw `price_bars`.
+- **Consequences:** No derived data can drift from its definition. Persistence will be
+  introduced when a consumer (validation/backtests) needs it, as a versioned derived-feature
+  table — never mixed into raw market data.
+
+## ADR-0011 — Candlestick definitions: raw OHLC, explicit thresholds, past-only context
+
+- **Status:** Accepted (2026-10-07, Phase 3)
+- **Decision:**
+  - Geometry uses provider raw OHLC; `adj_close` is not mixed into candle shapes.
+  - Every detector uses explicit thresholds from `CandleConfig` (docs/candlestick-engine.md).
+  - Prior trend = volatility-normalised net move over 10 bars ending before the pattern's first
+    candle. Hammer/hanging man and inverted hammer/shooting star are distinguished by it;
+    for other reversal patterns it is reported as `context_requirements_met`, not used to
+    suppress the observation, so its value can be tested later.
+  - `orientation` is the conventional label only; `strength` is geometric quality only.
+  - Ratios are rounded to 1e-10 for threshold stability.
+- **Consequences:** Definitions are reproducible and testable; sensitivity to thresholds and to
+  the trend definition must be examined in validation phases before any conclusion.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

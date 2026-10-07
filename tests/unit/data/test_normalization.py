@@ -37,7 +37,9 @@ def test_non_session_dates_are_excluded_and_reported(xnys: TradingCalendar) -> N
     out = normalize_daily(provider_bars(dict(sorted(rows.items()))), xnys)
     assert len(out.frame) == 6
     assert sorted(i.details["session_date"] for i in out.issues) == ["2024-07-04", "2024-07-06"]
-    assert {(i.check_name, i.action_taken) for i in out.issues} == {("non_session_date", "excluded")}
+    assert {(i.check_name, i.action_taken) for i in out.issues} == {
+        ("non_session_date", "excluded")
+    }
 
 
 def test_non_midnight_labels_are_flagged_but_mapped_by_local_date(xnys: TradingCalendar) -> None:

@@ -17,7 +17,8 @@ from app.data.quality import EXCLUDED, KEPT_FLAGGED, DataQualityIssue
 
 @dataclass
 class NormalizedBars:
-    frame: pd.DataFrame  # index: ts (session open, UTC); columns: BAR_COLUMNS + session_date, close_utc
+    # index: ts (session open, UTC); columns: BAR_COLUMNS + session_date, close_utc
+    frame: pd.DataFrame
     sessions: pd.DataFrame  # calendar sessions covering the provider's date span
     issues: list[DataQualityIssue] = field(default_factory=list)
 
@@ -31,7 +32,9 @@ def normalize_daily(bars: ProviderBars, calendar: TradingCalendar) -> Normalized
     columns = [*BAR_COLUMNS, "session_date", "close_utc"]
     if raw.empty:
         empty = pd.DataFrame(columns=columns, index=pd.DatetimeIndex([], tz="UTC", name="ts"))
-        return NormalizedBars(empty, calendar.sessions(calendar.last_session, calendar.first_session))
+        return NormalizedBars(
+            empty, calendar.sessions(calendar.last_session, calendar.first_session)
+        )
 
     local = raw.index.tz_convert(calendar.tz)
     session_dates = pd.DatetimeIndex(local.tz_localize(None).normalize())
@@ -56,9 +59,12 @@ def normalize_daily(bars: ProviderBars, calendar: TradingCalendar) -> Normalized
             DataQualityIssue(
                 check_name="non_session_date",
                 severity="error",
-                description=f"Bar dated {d.date()} but {calendar.exchange} has no session that day.",
+                description=f"Bar dated {d.date()}; {calendar.exchange} has no session that day.",
                 action_taken=EXCLUDED,
-                details={"provider_ts": provider_ts.isoformat(), "session_date": d.date().isoformat()},
+                details={
+                    "provider_ts": provider_ts.isoformat(),
+                    "session_date": d.date().isoformat(),
+                },
             )
         )
 

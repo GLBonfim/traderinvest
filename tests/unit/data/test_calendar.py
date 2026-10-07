@@ -13,7 +13,12 @@ def xnys() -> TradingCalendar:
 def test_holidays_and_weekends_are_not_sessions(xnys: TradingCalendar) -> None:
     s = xnys.sessions(date(2024, 7, 1), date(2024, 7, 9))
     assert [d.date().isoformat() for d in s.index] == [
-        "2024-07-01", "2024-07-02", "2024-07-03", "2024-07-05", "2024-07-08", "2024-07-09",
+        "2024-07-01",
+        "2024-07-02",
+        "2024-07-03",
+        "2024-07-05",
+        "2024-07-08",
+        "2024-07-09",
     ]
 
 
