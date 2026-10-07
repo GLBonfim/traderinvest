@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **Phase 8 — Backtesting**. This document describes what exists today and the intended
+Status: **Phase 9 — Statistical Validation**. This document describes what exists today and the intended
 direction. Components for later phases are listed as *planned* and do not exist in code yet.
 
 ## Goals
@@ -47,6 +47,9 @@ A reproducible, testable, evidence-driven research platform that can:
 │  app.backtest      Backtester: next-open fills, costs, gross/│                 │
 │                    net equity, metrics, benchmarks           │                 │
 │                    (backtesting.md)                          │                 │
+│  app.validation    Validator: block bootstrap, paired tests, │                 │
+│                    Holm/BH, cost sensitivity, slices         │                 │
+│                    (statistical-validation.md)               │                 │
 │  migrations/       Alembic (URL from env, never from .ini)   │                 │
 └──────────────────────────────────────────────────────────────┼─────────────────┘
                                                                │ 127.0.0.1:5432

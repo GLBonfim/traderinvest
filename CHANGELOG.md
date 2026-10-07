@@ -5,6 +5,26 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-07 — Phase 9: Statistical Validation
+
+### Added
+- `app/validation`: non-circular moving-block bootstrap (L 21, B 2,000, seed 20261007, 95%
+  percentile intervals) with paired resampling; vectorised metrics identical to Phase 8;
+  intervals for cumulative return, CAGR, volatility, Sharpe, Sortino, max drawdown
+  (approximate), annualised mean return; pre-declared 30-test formal family with centred
+  bootstrap p-values and Holm/BH corrections (declared m); descriptive comparisons (total-return
+  benchmark, gross vs net, slices); predefined cost scenarios A/B/C/D; fixed-date slices;
+  redundancy and concentration reports; typed models with full provenance; CLI
+  `python -m app.validation.cli run` (optional CSV output).
+- 44 new tests (502 total): bootstrap correctness (non-circular blocks, determinism, coverage
+  sanity), Phase 8 metric equivalence, Holm/BH known values, declared-m handling, cost-scenario
+  monotonicity, slice boundaries, append/future-mutation (OHLC, volume, adj_close, states)
+  leakage tests, leaky-validator control, SPY integration with the default configuration.
+- `docs/statistical-validation.md`, ADR-0018.
+
+### Not changed
+- Phase 4 zone expiry, bar-close timestamps, dividend treatment, all Phase 3–8 definitions.
+
 ## [0.8.0] — 2026-10-07 — Phase 8: Backtesting Engine
 
 ### Added

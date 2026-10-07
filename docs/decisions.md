@@ -249,6 +249,26 @@ acceptance; they are superseded by a new ADR.
   fingerprint). Timing strategies earn price return only; comparisons must use the
   price-return benchmark or acknowledge the dividend gap.
 
+## ADR-0018 — Statistical validation methodology
+
+- **Status:** Accepted (2026-10-07, Phase 9)
+- **Decision (all fixed before results were seen):**
+  - Non-circular moving-block bootstrap, L = 21 sessions, B = 2,000, percentile 95% intervals,
+    seed 20261007; identical index matrix for all series of a slice (paired comparisons);
+    resampling never crosses a slice boundary.
+  - Formal family = 30 pre-declared tests (5 timing strategies vs the price benchmark + 10
+    pairs among them; annualised mean-return and Sharpe differences) on the full slice with the
+    default costs; centred bootstrap p-values; Holm (primary, any dependence) and BH
+    (secondary); undefined tests count in m. Everything else is descriptive (no p-values).
+  - Predefined cost scenarios A 0 bps, B 5 bps, C 10 bps (all-inclusive per order, 0/order)
+    and D = Phase 8 default; robustness, not optimisation.
+  - Fixed-date slices `full`, `early` (≤ 2009-12-31), `late` (≥ 2010-01-01); features computed on
+    bars ≤ slice end; not train/validation/test sets.
+  - Phase 7/8 methodology unchanged (raw-price strategy P&L, total-return benchmark only on
+    adjusted prices); outputs ephemeral (optional CSV to git-ignored `data/`), no migration.
+- **Consequences:** Results are reproducible from (bars, config fingerprint). They quantify
+  uncertainty; they are not evidence of economic value or future profitability.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

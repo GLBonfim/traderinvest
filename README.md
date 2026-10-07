@@ -21,7 +21,8 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 | 6 | Market regimes: trend, volatility (causal percentile), momentum, participation, composite | ✅ Done |
 | 7 | Baseline strategies: buy & hold, SMA trend, SMA crossover, RSI, price-action trend, regime trend (LONG/FLAT states only) | ✅ Done |
 | 8 | Backtesting engine: next-session-open execution, explicit costs, gross/net, benchmarks (price & total return), metrics | ✅ Done |
-| 9–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
+| 9 | Statistical validation: moving-block bootstrap intervals, paired comparisons, Holm/BH, cost sensitivity, slices | ✅ Done |
+| 10–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
 
 The platform can ingest and validate SPY daily bars and describe candle geometry and
 candlestick patterns, describe market structure and price-action events, and compute technical
@@ -30,7 +31,9 @@ are **observations/features, not trading signals or predictions**. Six fixed bas
 turn them into hypothetical LONG/FLAT states; **baseline strategies are research benchmarks, not
 evidence of profitability**. A research backtester simulates them under explicit execution and
 cost assumptions; **backtest results are historical simulations, not evidence of future
-profitability**, and no statistical validation has been done yet. There are
+profitability**. Phase 9 quantifies their uncertainty (block bootstrap, multiple-testing
+control): on SPY the data **do not distinguish** the risk-adjusted performance of any timing
+baseline from buy & hold — an exploratory, not conclusive, result. There are
 **no indicators, no signals, no strategies and no trading logic** yet.
 
 ## Principles
@@ -55,6 +58,7 @@ app/
 ├── regimes/    Market Regime Engine: trend/volatility/momentum/participation + composite
 ├── strategies/ Six fixed baseline rules -> LONG/FLAT/INSUFFICIENT_DATA states (no orders)
 ├── backtest/   Research backtester: next-open fills, costs, equity, metrics, benchmarks
+├── validation/ Block-bootstrap uncertainty, paired comparisons, Holm/BH, cost sensitivity
 └── database/   SQLAlchemy 2 models + session
 migrations/     Alembic migrations
 tests/          unit + integration (PostgreSQL) tests
@@ -152,6 +156,14 @@ uv run python -m app.backtest.cli baseline --symbol SPY [--start 2000-01-01 --en
 
 Execution, costs, metrics and the baseline diagnostic: [docs/backtesting.md](docs/backtesting.md).
 
+Statistical validation (exploratory; ~30 s; optional CSV output in git-ignored `data/`):
+
+```bash
+uv run python -m app.validation.cli run --symbol SPY --out data/validation
+```
+
+Methodology, multiple-testing family and results: [docs/statistical-validation.md](docs/statistical-validation.md).
+
 `/health` returns `200` with `"database": {"status": "ok"}` when PostgreSQL is reachable, and
 `503` with `"status": "degraded"` when it is not.
 
@@ -189,8 +201,9 @@ All settings come from environment variables (or `.env`). See [.env.example](.en
 
 Backtests execute at the next session open with explicit costs and slippage, report gross and
 net results, and compare against price-return and total-return buy & hold (implemented,
-Phase 8). Walk-forward validation, out-of-sample testing and multiple-testing control are
-planned (Phase 9). Every component (candles, indicators, regimes)
+Phase 8). Phase 9 adds moving-block bootstrap uncertainty intervals, paired comparisons with a
+pre-declared test family and Holm/BH corrections, predefined cost scenarios and fixed
+chronological slices. No parameter has been fitted on any slice. Every component (candles, indicators, regimes)
 must earn its place through ablation testing. See [docs/architecture.md](docs/architecture.md).
 
 ## Risk management (planned)
