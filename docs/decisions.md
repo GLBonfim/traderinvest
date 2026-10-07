@@ -226,6 +226,29 @@ acceptance; they are superseded by a new ADR.
 - **Consequences:** Phase 8 receives unambiguous, point-in-time states and must make every
   execution assumption (fill price, costs) explicit itself.
 
+## ADR-0017 — Backtest execution and cost conventions
+
+- **Status:** Accepted (2026-10-07, Phase 8)
+- **Decision:**
+  - Single execution model `next_session_open`: a state decided at the close of T executes at
+    the raw open of the next XNYS session (bar T+1). The engine validates every fill (after the
+    decision, at the next session, equal to `effective_at`, at the open price).
+  - Final-bar decisions are reported as pending, never executed on an invented bar; open
+    positions are marked to market at the last close, separate from completed trades.
+  - Position ∈ {0, 1}, all-in/all-out, fractional shares, no shorting/leverage/margin.
+  - `INSUFFICIENT_DATA` keeps the previous target (0 before the first valid state).
+  - Costs per order: commission max(1.00 + N·bps, minimum), half of a 2 bps quoted spread,
+    2 bps slippage — generic research assumptions, never calibrated on results; gross and net
+    are produced from two runs on identical fills.
+  - Raw prices for execution and strategy P&L; adjusted prices only for a separate
+    total-return buy & hold benchmark.
+  - Metrics: A = 252, rf = 0, std ddof = 1, Sortino downside over all periods with target 0,
+    drawdown peak includes initial capital; undefined metrics are NaN.
+  - Results computed on demand; persistence will come with experiment tracking.
+- **Consequences:** Results are reproducible from (bars, strategy fingerprint, backtest
+  fingerprint). Timing strategies earn price return only; comparisons must use the
+  price-return benchmark or acknowledge the dividend gap.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

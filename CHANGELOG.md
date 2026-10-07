@@ -5,6 +5,30 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-07 — Phase 8: Backtesting Engine
+
+### Added
+- `app/backtest`: event-driven single-instrument backtester — next-session-open execution with
+  per-fill validation, all-in/all-out LONG/FLAT positions, explicit per-order costs
+  (commission, half spread, slippage), gross vs net runs, equity curve, completed trades,
+  marked-to-market open position, pending final decision, drawdown, metrics (cumulative, CAGR,
+  volatility, Sharpe, Sortino, drawdown/duration, trade stats, exposure, turnover,
+  concentration), price-return and total-return buy & hold benchmarks, temporal slicing
+  (`start`/`end`/`period_label`), loader adding `adj_close`, CLI `python -m app.backtest.cli`.
+- 42 new tests (458 total): exact accounting examples, cost/equity/P&L reconciliation,
+  metric formulas and NaN cases, calendar execution timing, rejected look-ahead execution
+  models, missing-session rejection, temporal slicing, prefix/full and future-mutation (incl.
+  adj_close) leakage tests, future-dependent-rule control, full SPY integration test.
+- `docs/backtesting.md` (incl. descriptive baseline diagnostic), ADR-0017.
+
+### Fixed during development
+- Empty trade tables had a different schema than non-empty ones; a fixed `TRADE_COLUMNS`
+  schema is now always used.
+
+### Not included (by design)
+- No optimisation, statistical significance testing, shorting, leverage, broker/paper/live
+  execution, persistence or migrations.
+
 ## [0.7.0] — 2026-10-07 — Phase 7: Baseline Strategies
 
 ### Added

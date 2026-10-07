@@ -20,14 +20,17 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 | 5 | Technical indicators: SMA, EMA, MACD, RSI, Stochastic, ROC, ATR, Bollinger, realized vol, relative volume, OBV | ✅ Done |
 | 6 | Market regimes: trend, volatility (causal percentile), momentum, participation, composite | ✅ Done |
 | 7 | Baseline strategies: buy & hold, SMA trend, SMA crossover, RSI, price-action trend, regime trend (LONG/FLAT states only) | ✅ Done |
-| 8–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
+| 8 | Backtesting engine: next-session-open execution, explicit costs, gross/net, benchmarks (price & total return), metrics | ✅ Done |
+| 9–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
 
 The platform can ingest and validate SPY daily bars and describe candle geometry and
 candlestick patterns, describe market structure and price-action events, and compute technical
 indicators and descriptive market regimes. Patterns, events, indicator values and regime labels
 are **observations/features, not trading signals or predictions**. Six fixed baseline strategies
 turn them into hypothetical LONG/FLAT states; **baseline strategies are research benchmarks, not
-evidence of profitability**, and nothing has been backtested yet. There are
+evidence of profitability**. A research backtester simulates them under explicit execution and
+cost assumptions; **backtest results are historical simulations, not evidence of future
+profitability**, and no statistical validation has been done yet. There are
 **no indicators, no signals, no strategies and no trading logic** yet.
 
 ## Principles
@@ -51,6 +54,7 @@ app/
 ├── indicators/ Technical Indicator Engine: transparent formulas, warm-up catalog, CLI
 ├── regimes/    Market Regime Engine: trend/volatility/momentum/participation + composite
 ├── strategies/ Six fixed baseline rules -> LONG/FLAT/INSUFFICIENT_DATA states (no orders)
+├── backtest/   Research backtester: next-open fills, costs, equity, metrics, benchmarks
 └── database/   SQLAlchemy 2 models + session
 migrations/     Alembic migrations
 tests/          unit + integration (PostgreSQL) tests
@@ -140,6 +144,14 @@ uv run python -m app.strategies.cli run --symbol SPY
 Rules, timing (`observed_at` / `effective_at`) and guarantees:
 [docs/baseline-strategies.md](docs/baseline-strategies.md).
 
+Backtest diagnostic of the baselines (hypothetical, explicit assumptions):
+
+```bash
+uv run python -m app.backtest.cli baseline --symbol SPY [--start 2000-01-01 --end 2009-12-31]
+```
+
+Execution, costs, metrics and the baseline diagnostic: [docs/backtesting.md](docs/backtesting.md).
+
 `/health` returns `200` with `"database": {"status": "ok"}` when PostgreSQL is reachable, and
 `503` with `"status": "degraded"` when it is not.
 
@@ -173,10 +185,12 @@ All settings come from environment variables (or `.env`). See [.env.example](.en
 | Massive (Polygon) | Intended primary OHLCV provider | Future |
 | Alpha Vantage / FMP / FRED | Macro, calendars, point-in-time data | Future |
 
-## Methodology (planned)
+## Methodology
 
-Backtests will use temporal splits, walk-forward validation, out-of-sample testing, transaction
-costs, slippage and comparison to buy & hold. Every component (candles, indicators, regimes)
+Backtests execute at the next session open with explicit costs and slippage, report gross and
+net results, and compare against price-return and total-return buy & hold (implemented,
+Phase 8). Walk-forward validation, out-of-sample testing and multiple-testing control are
+planned (Phase 9). Every component (candles, indicators, regimes)
 must earn its place through ablation testing. See [docs/architecture.md](docs/architecture.md).
 
 ## Risk management (planned)

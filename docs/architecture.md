@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **Phase 7 — Baseline Strategies**. This document describes what exists today and the intended
+Status: **Phase 8 — Backtesting**. This document describes what exists today and the intended
 direction. Components for later phases are listed as *planned* and do not exist in code yet.
 
 ## Goals
@@ -44,6 +44,9 @@ A reproducible, testable, evidence-driven research platform that can:
 │  app.strategies    StrategyEngine: 6 fixed baselines ->      │                 │
 │                    LONG/FLAT states, calendar timing         │                 │
 │                    (baseline-strategies.md)                  │                 │
+│  app.backtest      Backtester: next-open fills, costs, gross/│                 │
+│                    net equity, metrics, benchmarks           │                 │
+│                    (backtesting.md)                          │                 │
 │  migrations/       Alembic (URL from env, never from .ini)   │                 │
 └──────────────────────────────────────────────────────────────┼─────────────────┘
                                                                │ 127.0.0.1:5432
@@ -127,7 +130,6 @@ Created only when the corresponding phase starts:
 app/
 ├── features/
 ├── models/        ML (baseline → logistic → trees → boosting)
-├── backtesting/   temporal engine, walk-forward, costs
 ├── risk/          RiskManager
 ├── signals/       SignalEngine, DecisionEngine
 ├── execution/     Broker interface, PaperBroker
@@ -139,7 +141,8 @@ app/
 - No signals or trading logic exist. Market data: SPY daily from yfinance only.
 - Candlestick, price-action, indicator and regime observations and strategy states are
   computed on demand and not persisted (ADR-0010, ADR-0012, ADR-0014, ADR-0015, ADR-0016).
-- No backtesting, performance or execution exists yet.
+- Backtest results are computed on demand and not persisted yet (experiment tracking: later).
+- No real or paper execution exists.
 - The app runs on the host; only PostgreSQL is containerised (no app Dockerfile yet).
 - No CI pipeline yet.
 - `/health` can take up to ~2× `DB_CONNECT_TIMEOUT_S` to report `503` when the DB is down
