@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **Phase 5 — Technical Indicators**. This document describes what exists today and the intended
+Status: **Phase 6 — Market Regimes**. This document describes what exists today and the intended
 direction. Components for later phases are listed as *planned* and do not exist in code yet.
 
 ## Goals
@@ -38,6 +38,9 @@ A reproducible, testable, evidence-driven research platform that can:
 │  app.indicators    IndicatorEngine: SMA/EMA/MACD/RSI/Stoch/   │                 │
 │                    ROC/ATR/Bollinger/RV/RelVol/OBV           │                 │
 │                    (technical-indicators.md)                 │                 │
+│  app.regimes       RegimeEngine: composes price action +     │                 │
+│                    indicators into descriptive regimes       │                 │
+│                    (market-regimes.md)                       │                 │
 │  migrations/       Alembic (URL from env, never from .ini)   │                 │
 └──────────────────────────────────────────────────────────────┼─────────────────┘
                                                                │ 127.0.0.1:5432
@@ -119,7 +122,6 @@ Created only when the corresponding phase starts:
 
 ```
 app/
-├── regimes/       MarketRegimeEngine
 ├── features/
 ├── strategies/
 ├── models/        ML (baseline → logistic → trees → boosting)
@@ -133,8 +135,8 @@ app/
 ## Known limitations
 
 - No signals or trading logic exist. Market data: SPY daily from yfinance only.
-- Candlestick, price-action and indicator observations are computed on demand and not
-  persisted (ADR-0010, ADR-0012, ADR-0014).
+- Candlestick, price-action, indicator and regime observations are computed on demand and not
+  persisted (ADR-0010, ADR-0012, ADR-0014, ADR-0015).
 - The app runs on the host; only PostgreSQL is containerised (no app Dockerfile yet).
 - No CI pipeline yet.
 - `/health` can take up to ~2× `DB_CONNECT_TIMEOUT_S` to report `503` when the DB is down

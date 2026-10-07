@@ -1,6 +1,6 @@
 [project]
 name = "quant-platform"
-version = "0.5.0"
+version = "0.6.0"
 description = "Market analysis & algorithmic trading research platform (research-only; no real-money execution)."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

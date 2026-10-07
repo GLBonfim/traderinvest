@@ -189,6 +189,26 @@ acceptance; they are superseded by a new ADR.
   `ENGINE_VERSION`). Return-based indicators include ex-dividend drops; switching to adjusted
   closes would be a new engine version.
 
+## ADR-0015 — Market regime conventions
+
+- **Status:** Accepted (2026-10-07, Phase 6)
+- **Decision:**
+  - Regimes are separate dimensions composed from existing engines: trend = Price Action
+    structure; volatility = causal percentile of realized volatility; momentum = unanimous
+    RSI/ROC/MACD agreement; participation = instrument-level relative volume (explicitly not
+    breadth). No formula is re-implemented.
+  - Causal percentile: previous 756 bars (T excluded), ≥ 252 valid references, mid-rank ties,
+    no interpolation, values rounded to 1e−10 before ranking. Cut-offs 0.20 / 0.80 / 0.95.
+  - Composite = explicit trend × volatility table; momentum and participation stay separate.
+  - Raw labels per bar; no smoothing/hysteresis; `changed` and `age` are causal observations.
+  - Missing volume is passed to the Price Action Engine as 0 because none of its outputs depend
+    on volume (tested); this avoids changing Price Action behaviour.
+  - Thresholds chosen for clarity (quantiles, textbook RSI levels), never from returns or
+    trading outcomes. Computed on demand, not persisted.
+- **Consequences:** Every label is reproducible from (bars, three configs, engine versions); the
+  combined `config_fingerprint` covers all three. Volatility labels are relative to the trailing
+  history and unavailable for the first 272 daily bars.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

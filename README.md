@@ -18,12 +18,13 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 | 3 | Candlestick Engine: candle geometry + 20 pattern detectors (observations, not signals) | ✅ Done |
 | 4 | Price Action Engine: swings, structure, zones, breakouts, retests, rejections, ranges | ✅ Done |
 | 5 | Technical indicators: SMA, EMA, MACD, RSI, Stochastic, ROC, ATR, Bollinger, realized vol, relative volume, OBV | ✅ Done |
-| 6–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
+| 6 | Market regimes: trend, volatility (causal percentile), momentum, participation, composite | ✅ Done |
+| 7–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
 
 The platform can ingest and validate SPY daily bars and describe candle geometry and
 candlestick patterns, describe market structure and price-action events, and compute technical
-indicators. Patterns, events and indicator values are **observations/features, not trading
-signals**. There are
+indicators and descriptive market regimes. Patterns, events, indicator values and regime labels
+are **observations/features, not trading signals or predictions**. There are
 **no indicators, no signals, no strategies and no trading logic** yet.
 
 ## Principles
@@ -45,6 +46,7 @@ app/
 ├── candles/    Candlestick Engine: geometry, pattern detectors, loader, CLI
 ├── price_action/ Price Action Engine: swings, structure, zones, events, outcomes, ranges
 ├── indicators/ Technical Indicator Engine: transparent formulas, warm-up catalog, CLI
+├── regimes/    Market Regime Engine: trend/volatility/momentum/participation + composite
 └── database/   SQLAlchemy 2 models + session
 migrations/     Alembic migrations
 tests/          unit + integration (PostgreSQL) tests
@@ -117,6 +119,14 @@ uv run --with TA-Lib python scripts/crossvalidate_indicators.py   # optional cro
 
 Formulas, warm-up and edge cases: [docs/technical-indicators.md](docs/technical-indicators.md).
 
+Market regimes (descriptive labels, not signals):
+
+```bash
+uv run python -m app.regimes.cli describe --symbol SPY
+```
+
+Definitions, causal percentile and composite table: [docs/market-regimes.md](docs/market-regimes.md).
+
 `/health` returns `200` with `"database": {"status": "ok"}` when PostgreSQL is reachable, and
 `503` with `"status": "degraded"` when it is not.
 
@@ -167,6 +177,7 @@ mandatory no-trade conditions. Paper trading only until full validation.
 - Candlestick patterns, price-action events and indicators are unvalidated features;
   thresholds and periods are conventions.
 - Indicators use raw (dividend-unadjusted) closes.
+- Regimes have no market-breadth dimension (no point-in-time constituent data yet).
 - yfinance is unsuitable for production and limits intraday history.
 - Past performance in a backtest does not predict future results.
 

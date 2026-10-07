@@ -5,6 +5,25 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-07 — Phase 6: Market Regimes
+
+### Added
+- `app/regimes`: `RegimeEngine` composing the Price Action and Indicator engines into
+  descriptive regime dimensions — trend, volatility (causal mid-rank percentile of realized
+  volatility vs the previous 756 bars, ≥ 252 references; low/normal/high/extreme at
+  0.20/0.80/0.95), momentum (unanimous RSI/ROC/MACD; extremes at RSI 70/30), instrument-level
+  volume participation — plus an explicit trend × volatility composite, per-dimension
+  `changed`/`age`, combined config fingerprint, `state_as_of`, CLI `python -m app.regimes.cli`.
+- 88 new tests (371 total): exact percentile/threshold/composite tests, upstream-integration
+  checks, Price Action volume-invariance proof, warm-up boundaries, edge cases, prefix and
+  future-mutation leakage tests with a full-sample-percentile control, SPY integration
+  regression snapshot.
+- `docs/market-regimes.md`, ADR-0015.
+
+### Not included (by design)
+- No breadth (no point-in-time constituents), macro/news regimes, signals, strategies,
+  backtests, ML, risk or broker code; no persistence, no migrations.
+
 ## [0.5.0] — 2026-10-07 — Phase 5: Technical Indicators
 
 ### Added
