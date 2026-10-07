@@ -5,6 +5,24 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-07 — Phase 4: Price Action Engine
+
+### Added
+- `app/price_action`: `PriceActionEngine` with pivot detection and explicit confirmation
+  latency (`pivot_ts` vs `confirmed_at`), HH/HL/LH/LL/EH/EL labels, structure classification
+  (uptrend/downtrend/range/transition/insufficient_data), trend + structural quality + evidence,
+  incremental support/resistance zones (tolerance, width cap, merging, availability, touches),
+  close-based breakout/breakdown, retest, rejection, objective sweep events, separately
+  timestamped outcomes (failed/held/pending), consolidation episodes, range
+  expansion/contraction, `state_as_of` for future multi-timeframe alignment.
+- CLI `python -m app.price_action.cli scan` (descriptive counts).
+- 78 new tests (227 total), incl. truncation and future-perturbation leakage tests with a
+  leaky-confirmation control, boundary tests for every threshold, SPY 2020 swing snapshot.
+- `docs/price-action-engine.md`, ADR-0012, ADR-0013.
+
+### Not included (by design)
+- No persistence, signals, decisions, indicators, strategies, backtests, ML or broker code.
+
 ## [0.3.0] — 2026-10-07 — Phase 3: Candlestick Engine
 
 ### Added

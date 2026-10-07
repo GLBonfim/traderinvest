@@ -55,3 +55,22 @@ def test_loader_returns_only_closed_raw_bars_in_utc(session: Session) -> None:
 def test_loader_unknown_symbol(session: Session) -> None:
     with pytest.raises(LookupError):
         load_closed_bars(session, "NOPE")
+
+
+def test_price_action_engine_runs_on_loaded_bars(session: Session) -> None:
+    from app.price_action.engine import PriceActionEngine
+
+    ingest_daily_bars(
+        session,
+        StubProvider(regular_rows()),
+        SPY,
+        date(2024, 7, 1),
+        date(2024, 7, 9),
+        calendar=TradingCalendar("XNYS"),
+        as_of=datetime(2024, 8, 1, tzinfo=UTC),
+    )
+    instrument_id, bars = load_closed_bars(session, "SPY")
+    a = PriceActionEngine().analyze(bars, instrument_id=instrument_id)
+    assert len(a.state) == len(bars) == 6
+    assert set(a.state["instrument_id"]) == {instrument_id}
+    assert set(a.state["structure"]) == {"insufficient_data"}  # too few bars for pivots

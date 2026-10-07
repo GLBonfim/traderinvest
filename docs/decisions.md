@@ -138,6 +138,37 @@ acceptance; they are superseded by a new ADR.
 - **Consequences:** Definitions are reproducible and testable; sensitivity to thresholds and to
   the trend definition must be examined in validation phases before any conclusion.
 
+## ADR-0012 — Price Action Engine: sequential point-in-time processing, no persistence
+
+- **Status:** Accepted (2026-10-07, Phase 4)
+- **Decision:**
+  - Pivots need future bars by definition; each carries `pivot_ts` and `confirmed_at`
+    (`= pivot + swing_right_bars`), and every consumer uses `confirmed_at`.
+  - Bars are processed sequentially: events at t use zones available at t−1; pivots confirmed
+    at t are added after; the state row for t is emitted last. Nothing reads bars after t.
+  - Output columns have explicit dtypes so that the representation of state(T) cannot depend on
+    later rows (found during Phase 4 testing: all-None columns changed type with more data).
+  - Observations are computed on demand like candlestick observations (same reasoning as
+    ADR-0010); `engine_version` + `config_fingerprint` provide provenance.
+  - Candle geometry (wick ratios, direction) is reused from `app.candles`; the engines remain
+    separate and are composed only by consumers.
+- **Consequences:** Point-in-time correctness holds by construction and is tested (truncation,
+  future perturbation, leaky-confirmation control). Sequential processing costs ~1.4 s for the
+  full SPY history, acceptable for research.
+
+## ADR-0013 — Observation vs outcome; objective sweep event
+
+- **Status:** Accepted (2026-10-07, Phase 4)
+- **Decision:**
+  - Breakout/breakdown outcomes (failed / held / pending) are stored in a separate `outcomes`
+    table with `outcome_at`; event rows never contain outcomes and are never rewritten.
+  - A "liquidity sweep" is implemented only as an objective OHLCV event named `sweep`: trade
+    beyond a confirmed zone and close back on the original side. No claim about orders,
+    stops or institutional liquidity is made, since OHLCV cannot support it.
+  - Breakouts are close-based; wick-only excursions are sweeps (or rejections), never breakouts.
+- **Consequences:** Backtests can use an outcome only from its `outcome_at`, preventing the
+  classic "false breakout" look-ahead.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)
