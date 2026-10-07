@@ -17,11 +17,13 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 | 2 | Market data: provider interface, yfinance SPY daily, NYSE calendar, validation, storage | ✅ Done |
 | 3 | Candlestick Engine: candle geometry + 20 pattern detectors (observations, not signals) | ✅ Done |
 | 4 | Price Action Engine: swings, structure, zones, breakouts, retests, rejections, ranges | ✅ Done |
-| 5–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
+| 5 | Technical indicators: SMA, EMA, MACD, RSI, Stochastic, ROC, ATR, Bollinger, realized vol, relative volume, OBV | ✅ Done |
+| 6–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
 
 The platform can ingest and validate SPY daily bars and describe candle geometry and
-candlestick patterns, and describe market structure and price-action events. Patterns and
-events are **observations/hypotheses, not trading signals**. There are
+candlestick patterns, describe market structure and price-action events, and compute technical
+indicators. Patterns, events and indicator values are **observations/features, not trading
+signals**. There are
 **no indicators, no signals, no strategies and no trading logic** yet.
 
 ## Principles
@@ -42,6 +44,7 @@ app/
 │               validation, ingestion, CLI
 ├── candles/    Candlestick Engine: geometry, pattern detectors, loader, CLI
 ├── price_action/ Price Action Engine: swings, structure, zones, events, outcomes, ranges
+├── indicators/ Technical Indicator Engine: transparent formulas, warm-up catalog, CLI
 └── database/   SQLAlchemy 2 models + session
 migrations/     Alembic migrations
 tests/          unit + integration (PostgreSQL) tests
@@ -105,6 +108,15 @@ uv run python -m app.price_action.cli scan --symbol SPY
 See [docs/price-action-engine.md](docs/price-action-engine.md) (swing confirmation latency,
 zones, breakout/retest/rejection/sweep rules, observation vs outcome).
 
+Technical indicators (latest values; descriptive features only):
+
+```bash
+uv run python -m app.indicators.cli latest --symbol SPY
+uv run --with TA-Lib python scripts/crossvalidate_indicators.py   # optional cross-check
+```
+
+Formulas, warm-up and edge cases: [docs/technical-indicators.md](docs/technical-indicators.md).
+
 `/health` returns `200` with `"database": {"status": "ok"}` when PostgreSQL is reachable, and
 `503` with `"status": "degraded"` when it is not.
 
@@ -152,8 +164,9 @@ mandatory no-trade conditions. Paper trading only until full validation.
 ## Limitations
 
 - Only SPY daily bars from yfinance.
-- Candlestick patterns and price-action events are unvalidated hypotheses; thresholds are
-  conventions.
+- Candlestick patterns, price-action events and indicators are unvalidated features;
+  thresholds and periods are conventions.
+- Indicators use raw (dividend-unadjusted) closes.
 - yfinance is unsuitable for production and limits intraday history.
 - Past performance in a backtest does not predict future results.
 

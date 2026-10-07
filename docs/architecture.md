@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **Phase 4 — Price Action Engine**. This document describes what exists today and the intended
+Status: **Phase 5 — Technical Indicators**. This document describes what exists today and the intended
 direction. Components for later phases are listed as *planned* and do not exist in code yet.
 
 ## Goals
@@ -35,6 +35,9 @@ A reproducible, testable, evidence-driven research platform that can:
 │  app.price_action  PriceActionEngine: swings (confirmation   │                 │
 │                    latency), structure, zones, events,       │                 │
 │                    outcomes, ranges (price-action-engine.md) │                 │
+│  app.indicators    IndicatorEngine: SMA/EMA/MACD/RSI/Stoch/   │                 │
+│                    ROC/ATR/Bollinger/RV/RelVol/OBV           │                 │
+│                    (technical-indicators.md)                 │                 │
 │  migrations/       Alembic (URL from env, never from .ini)   │                 │
 └──────────────────────────────────────────────────────────────┼─────────────────┘
                                                                │ 127.0.0.1:5432
@@ -116,7 +119,6 @@ Created only when the corresponding phase starts:
 
 ```
 app/
-├── indicators/
 ├── regimes/       MarketRegimeEngine
 ├── features/
 ├── strategies/
@@ -131,8 +133,8 @@ app/
 ## Known limitations
 
 - No signals or trading logic exist. Market data: SPY daily from yfinance only.
-- Candlestick and price-action observations are computed on demand and not persisted
-  (ADR-0010, ADR-0012).
+- Candlestick, price-action and indicator observations are computed on demand and not
+  persisted (ADR-0010, ADR-0012, ADR-0014).
 - The app runs on the host; only PostgreSQL is containerised (no app Dockerfile yet).
 - No CI pipeline yet.
 - `/health` can take up to ~2× `DB_CONNECT_TIMEOUT_S` to report `503` when the DB is down

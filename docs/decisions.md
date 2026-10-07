@@ -169,6 +169,26 @@ acceptance; they are superseded by a new ADR.
 - **Consequences:** Backtests can use an outcome only from its `outcome_at`, preventing the
   classic "false breakout" look-ahead.
 
+## ADR-0014 — Technical indicator conventions
+
+- **Status:** Accepted (2026-10-07, Phase 5)
+- **Decision:**
+  - Indicators are small, transparent pandas/numpy implementations; no TA library dependency.
+    TA-Lib is used only as an external cross-check (`scripts/crossvalidate_indicators.py`, run in
+    an ephemeral environment).
+  - Raw OHLC and raw volume for every indicator (consistent with the other engines); no
+    adjusted close and no corporate-action handling in this phase.
+  - Recursive smoothers (EMA α = 2/(n+1); Wilder α = 1/n for RSI and ATR) are seeded with the
+    SMA of their first n valid inputs; MACD uses standalone EMAs (differs from TA-Lib's MACD
+    only during initialisation; verified < 1e−12 after 300 bars).
+  - A value is published as soon as it is computable (e.g. %K before %D), NaN before.
+  - Bollinger std ddof = 0; realized volatility: log returns, ddof = 1, √252; relative volume
+    excludes the current bar; OBV starts at 0; undefined values are NaN.
+  - Computed on demand, not persisted (same reasoning as ADR-0010).
+- **Consequences:** Every value is reproducible from (bars, `IndicatorConfig`,
+  `ENGINE_VERSION`). Return-based indicators include ex-dividend drops; switching to adjusted
+  closes would be a new engine version.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

@@ -5,6 +5,26 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-07 — Phase 5: Technical Indicators
+
+### Added
+- `app/indicators`: `IndicatorEngine` with SMA/EMA (20, 50, 200), MACD 12/26/9, Wilder RSI 14,
+  Stochastic 14/3/3, ROC 12, true range, Wilder ATR 14, Bollinger 20/2 (ddof 0), realized
+  volatility 20 (log returns, ddof 1, √252), relative volume 20 (current bar excluded), OBV;
+  `IndicatorConfig` with validation and fingerprint; per-column catalog with exact warm-up;
+  `value_as_of`; CLI `python -m app.indicators.cli latest`.
+- `scripts/crossvalidate_indicators.py`: cross-check against TA-Lib 0.8.1 (ephemeral); all
+  indicators match or differ only by verified, documented conventions (MACD initialisation,
+  %K publication start, OBV starting offset).
+- 56 new tests (283 total): hand-computed examples, independent loop reference, warm-up
+  boundaries for every column, edge cases (flat prices, zero/missing volume, zero
+  denominators, scale ×1e±6), prefix/full and future-mutation leakage tests with a centred-
+  window control, SPY regression snapshot, full-history SPY integration test.
+- `docs/technical-indicators.md`, ADR-0014.
+
+### Not included (by design)
+- No persistence, signals, strategies, regimes, backtests, ML or broker code.
+
 ## [0.4.0] — 2026-10-07 — Phase 4: Price Action Engine
 
 ### Added
