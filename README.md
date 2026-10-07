@@ -23,7 +23,8 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 | 8 | Backtesting engine: next-session-open execution, explicit costs, gross/net, benchmarks (price & total return), metrics | ✅ Done |
 | 9 | Statistical validation: moving-block bootstrap intervals, paired comparisons, Holm/BH, cost sensitivity, slices | ✅ Done |
 | 10 | Machine learning research: logistic regression & random forest, chronological split, pre-declared edge rule — **NO INCREMENTAL EDGE FOUND** | ✅ Done |
-| 11–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
+| 11 | Risk management: sizing, limits, drawdown/session locks, close-based stops, overlay vs control | ✅ Done |
+| 12–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
 
 The platform can ingest and validate SPY daily bars and describe candle geometry and
 candlestick patterns, describe market structure and price-action events, and compute technical
@@ -36,7 +37,9 @@ profitability**. Phase 9 quantifies their uncertainty (block bootstrap, multiple
 control): on SPY the data **do not distinguish** the risk-adjusted performance of any timing
 baseline from buy & hold — an exploratory, not conclusive, result. Phase 10 tested whether
 supervised ML adds information beyond the baselines under a pre-declared protocol: **NO
-INCREMENTAL EDGE FOUND** (out-of-sample AUC ≈ 0.5, accuracy below "always up"). There are
+INCREMENTAL EDGE FOUND** (out-of-sample AUC ≈ 0.5, accuracy below "always up"). Phase 11 adds a
+risk-management layer (sizing, limits, locks, stops) measured against a no-overlay control;
+it is a control layer, not an alpha source. There are
 **no indicators, no signals, no strategies and no trading logic** yet.
 
 ## Principles
@@ -63,6 +66,7 @@ app/
 ├── backtest/   Research backtester: next-open fills, costs, equity, metrics, benchmarks
 ├── validation/ Block-bootstrap uncertainty, paired comparisons, Holm/BH, cost sensitivity
 ├── ml/         Point-in-time features, chronological split, LR/RF, Phase 8/9 evaluation
+├── risk/       Risk overlay: sizing, limits, drawdown/session locks, stops, diagnostics
 └── database/   SQLAlchemy 2 models + session
 migrations/     Alembic migrations
 tests/          unit + integration (PostgreSQL) tests
@@ -176,6 +180,14 @@ uv run python -m app.ml.cli run --symbol SPY
 
 Protocol, features, split and results: [docs/machine-learning.md](docs/machine-learning.md).
 
+Risk overlays on the baselines (measurement only; ~60 s; CSV in git-ignored `data/risk/`):
+
+```bash
+uv run python -m app.risk.cli run --symbol SPY
+```
+
+Architecture, formulas, stop/OHLC conventions and results: [docs/risk-management.md](docs/risk-management.md).
+
 `/health` returns `200` with `"database": {"status": "ok"}` when PostgreSQL is reachable, and
 `503` with `"status": "degraded"` when it is not.
 
@@ -218,10 +230,11 @@ pre-declared test family and Holm/BH corrections, predefined cost scenarios and 
 chronological slices. No parameter has been fitted on any slice. Every component (candles, indicators, regimes)
 must earn its place through ablation testing. See [docs/architecture.md](docs/architecture.md).
 
-## Risk management (planned)
+## Risk management
 
-Fixed-fractional and volatility-targeted sizing, max exposure, max daily loss, max drawdown and
-mandatory no-trade conditions. Paper trading only until full validation.
+Implemented (Phase 11) as a measurement/control overlay: fixed-fraction, volatility-target and
+ATR-risk sizing, exposure caps (no leverage), drawdown and session locks, close-based stops.
+Every decision records requested vs approved exposure. Paper trading only until full validation.
 
 ## Limitations
 

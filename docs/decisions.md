@@ -289,6 +289,27 @@ acceptance; they are superseded by a new ADR.
 - **Consequences:** Result on SPY: NO INCREMENTAL EDGE FOUND for both models. Any future model
   must beat this protocol, not a re-tuned version of it.
 
+## ADR-0020 — Risk overlay architecture and conventions
+
+- **Status:** Accepted (2026-10-07, Phase 11)
+- **Decision:**
+  - The risk layer sits between strategy states and execution and never modifies the signal;
+    each decision stores requested, sized, approved and target exposure with reasons.
+  - Exposures in [0, 1] are simulated in `app/risk` by generalising the Phase 8 accounting
+    (same costs, metrics and next-session-open validation) instead of modifying Phase 8; the
+    no-overlay control reproduces Phase 8 exactly (tested on all baselines).
+  - Rebalancing only when |actual exposure − target| ≥ 0.10 at the open, or on entry/exit.
+  - Sizing: full, fixed fraction, volatility target (σ*/σ̂20), ATR risk (b·close/(k·ATR14)),
+    capped at 1; undefined inputs → exposure 0.
+  - Stops evaluated on the close only (intraday ordering never inferred; touches reported;
+    intraday stop orders unsupported); re-entry after a stop requires a signal reset.
+  - Drawdown lock (force_flat / block_entries) with cooldown and HWM reset; session-loss and
+    consecutive-loss locks as disabled infrastructure.
+  - Six pre-declared scenarios with the control first; overlay-vs-control comparisons are
+    descriptive bootstrap intervals only (360), no selection.
+- **Consequences:** The effect of each control is measurable against an identical control.
+  Results show the expected return/risk trade-off; locks and stops are path-dependent.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

@@ -5,6 +5,27 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-10-07 — Phase 11: Risk Management
+
+### Added
+- `app/risk`: risk configuration and six pre-declared scenarios (control, fixed fraction 50%,
+  volatility target 10%, drawdown lock 20%, ATR stop 3×, ATR risk 1%); sizing formulas;
+  exposure caps (no leverage); drawdown and session-loss monitors with locks; close-based
+  fixed-% and ATR stops with intraday-touch diagnostics and signal-reset re-entry; an [0, 1]
+  exposure simulator reusing Phase 8 costs/metrics/execution validation (control == Phase 8
+  exactly); requested vs approved decision records; diagnostics (exposure, interventions,
+  states, stops, locks, costs, Phase 8 metrics); descriptive bootstrap comparisons vs control;
+  CLI `python -m app.risk.cli`.
+- 57 new tests (598 total): sizing/stop/monitor/limit units, OHLC ambiguity, stop timing,
+  re-entry lockout, drawdown force-flat/block-entries, Phase 8 equivalence, signal
+  immutability, no leverage/negative cash, prefix and future price/volume/indicator/state
+  mutation leakage tests with a leaky-volatility control, determinism, SPY integration.
+- `docs/risk-management.md`, ADR-0020.
+
+### Fixed during development
+- Fixed-fraction exposure drifted with price (rebalancing compared decided targets instead of
+  actual exposure); the band now applies to the actual exposure at the open.
+
 ## [0.10.0] — 2026-10-07 — Phase 10: Machine Learning (research)
 
 ### Added
