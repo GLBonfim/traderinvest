@@ -269,6 +269,26 @@ acceptance; they are superseded by a new ADR.
 - **Consequences:** Results are reproducible from (bars, config fingerprint). They quantify
   uncertainty; they are not evidence of economic value or future profitability.
 
+## ADR-0019 — Machine-learning research protocol
+
+- **Status:** Accepted (2026-10-07, Phase 10)
+- **Decision (fixed before results):**
+  - Target: raw close(T+1) > close(T); features strictly ≤ close(T); last row unscored.
+  - Chronological split TRAIN ≤ 2009-12-31, VALIDATION 2010–2017, TEST ≥ 2018 with a
+    1-session purge; random splits rejected by construction and by tests.
+  - 86 features from the existing engines; ML-specific scale-free representations for
+    price-level series; Price Action outcomes and adjusted close excluded.
+  - Preprocessing (missing indicators, TRAIN medians, standardisation) fitted on TRAIN only.
+  - Two model families (logistic regression, shallow random forest), fixed hyperparameters,
+    seed 20261007, no search, no class weights, threshold 0.5; models trained once on TRAIN.
+  - Evaluation: classification metrics + Phase 8 backtests (next-session open, raw prices,
+    Phase 8 costs, Phase 9 scenarios) + Phase 9 paired block bootstrap; 12-test Sharpe family
+    with Holm; pre-declared edge rule (AUC CI > 0.5, Holm-significant Sharpe gain vs all six
+    references, benchmark beaten at 10 bps).
+  - Outputs ephemeral (git-ignored `data/ml/`); scikit-learn added as a dependency.
+- **Consequences:** Result on SPY: NO INCREMENTAL EDGE FOUND for both models. Any future model
+  must beat this protocol, not a re-tuned version of it.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

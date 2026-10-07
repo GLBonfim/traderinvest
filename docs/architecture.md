@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **Phase 9 — Statistical Validation**. This document describes what exists today and the intended
+Status: **Phase 10 — Machine Learning (research)**. This document describes what exists today and the intended
 direction. Components for later phases are listed as *planned* and do not exist in code yet.
 
 ## Goals
@@ -50,6 +50,9 @@ A reproducible, testable, evidence-driven research platform that can:
 │  app.validation    Validator: block bootstrap, paired tests, │                 │
 │                    Holm/BH, cost sensitivity, slices         │                 │
 │                    (statistical-validation.md)               │                 │
+│  app.ml            MLExperiment: point-in-time features,     │                 │
+│                    chronological split, LR/RF, Phase 8/9     │                 │
+│                    evaluation (machine-learning.md)          │                 │
 │  migrations/       Alembic (URL from env, never from .ini)   │                 │
 └──────────────────────────────────────────────────────────────┼─────────────────┘
                                                                │ 127.0.0.1:5432
@@ -132,7 +135,6 @@ Created only when the corresponding phase starts:
 ```
 app/
 ├── features/
-├── models/        ML (baseline → logistic → trees → boosting)
 ├── risk/          RiskManager
 ├── signals/       SignalEngine, DecisionEngine
 ├── execution/     Broker interface, PaperBroker

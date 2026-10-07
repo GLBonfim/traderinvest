@@ -22,7 +22,8 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 | 7 | Baseline strategies: buy & hold, SMA trend, SMA crossover, RSI, price-action trend, regime trend (LONG/FLAT states only) | ✅ Done |
 | 8 | Backtesting engine: next-session-open execution, explicit costs, gross/net, benchmarks (price & total return), metrics | ✅ Done |
 | 9 | Statistical validation: moving-block bootstrap intervals, paired comparisons, Holm/BH, cost sensitivity, slices | ✅ Done |
-| 10–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
+| 10 | Machine learning research: logistic regression & random forest, chronological split, pre-declared edge rule — **NO INCREMENTAL EDGE FOUND** | ✅ Done |
+| 11–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
 
 The platform can ingest and validate SPY daily bars and describe candle geometry and
 candlestick patterns, describe market structure and price-action events, and compute technical
@@ -33,7 +34,9 @@ evidence of profitability**. A research backtester simulates them under explicit
 cost assumptions; **backtest results are historical simulations, not evidence of future
 profitability**. Phase 9 quantifies their uncertainty (block bootstrap, multiple-testing
 control): on SPY the data **do not distinguish** the risk-adjusted performance of any timing
-baseline from buy & hold — an exploratory, not conclusive, result. There are
+baseline from buy & hold — an exploratory, not conclusive, result. Phase 10 tested whether
+supervised ML adds information beyond the baselines under a pre-declared protocol: **NO
+INCREMENTAL EDGE FOUND** (out-of-sample AUC ≈ 0.5, accuracy below "always up"). There are
 **no indicators, no signals, no strategies and no trading logic** yet.
 
 ## Principles
@@ -59,6 +62,7 @@ app/
 ├── strategies/ Six fixed baseline rules -> LONG/FLAT/INSUFFICIENT_DATA states (no orders)
 ├── backtest/   Research backtester: next-open fills, costs, equity, metrics, benchmarks
 ├── validation/ Block-bootstrap uncertainty, paired comparisons, Holm/BH, cost sensitivity
+├── ml/         Point-in-time features, chronological split, LR/RF, Phase 8/9 evaluation
 └── database/   SQLAlchemy 2 models + session
 migrations/     Alembic migrations
 tests/          unit + integration (PostgreSQL) tests
@@ -163,6 +167,14 @@ uv run python -m app.validation.cli run --symbol SPY --out data/validation
 ```
 
 Methodology, multiple-testing family and results: [docs/statistical-validation.md](docs/statistical-validation.md).
+
+Machine-learning experiment (research only; ~50 s; reports in git-ignored `data/ml/`):
+
+```bash
+uv run python -m app.ml.cli run --symbol SPY
+```
+
+Protocol, features, split and results: [docs/machine-learning.md](docs/machine-learning.md).
 
 `/health` returns `200` with `"database": {"status": "ok"}` when PostgreSQL is reachable, and
 `503` with `"status": "degraded"` when it is not.

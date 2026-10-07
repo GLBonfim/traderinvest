@@ -5,6 +5,28 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-10-07 — Phase 10: Machine Learning (research)
+
+### Added
+- `app/ml`: typed point-in-time feature dataset (86 features from Phases 3–6 with catalog,
+  availability state, observed_at, fingerprint), close-to-close target with target timestamp,
+  chronological split with purge, TRAIN-only preprocessing, logistic regression and random
+  forest with fixed hyperparameters and seed, prediction → LONG/FLAT states, classification
+  metrics + block-bootstrap AUC intervals, Phase 8 backtests across 5 windows × 4 cost
+  scenarios vs all baselines and benchmarks, 12-test Holm/BH Sharpe family, pre-declared edge
+  verdict, CSV/JSON experiment reports with git commit (+dirty flag), CLI `python -m app.ml.cli`.
+- Dependency: scikit-learn.
+- 39 new tests (541 total): feature timing (prefix/append, future OHLC/volume/adj_close and
+  per-component mutation, pivot latency, leaky-feature control), target timing, split rejection
+  of random/overlapping splits, TRAIN-only preprocessing (with leaky control), training
+  isolation from validation/test features and targets, bit-identical determinism, next-open
+  execution of ML states, report structure, edge rule, SPY integration.
+- `docs/machine-learning.md`, ADR-0019.
+
+### Result
+- NO INCREMENTAL EDGE FOUND (both models; test AUC 0.519 / 0.505 with intervals including 0.5;
+  no Sharpe difference survives Holm).
+
 ## [0.9.0] — 2026-10-07 — Phase 9: Statistical Validation
 
 ### Added
