@@ -18,7 +18,6 @@ Nothing at t reads data from t+1 or later. The strategy's state is never modifie
 decision row keeps `requested_exposure` next to `approved_exposure`.
 """
 
-import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,13 +25,11 @@ import numpy as np
 import pandas as pd
 
 from app.backtest.config import BacktestConfig
-from app.backtest.execution import buy_notional, order_costs
 from app.backtest.metrics import all_metrics, drawdown, returns_from_equity
 from app.backtest.portfolio import target_positions
 from app.risk.config import RISK_VERSION, RiskConfig
-from app.risk.limits import LOCKED, NORMAL, WARNING, DrawdownMonitor, SessionMonitor, cap_exposure
-from app.risk.sizing import size_exposure
-from app.risk.stops import evaluate_stop, stop_level
+from app.risk.limits import LOCKED, NORMAL, WARNING
+from app.risk.manager import RiskManager, apply_order, plan_order
 
 EPS = 1e-12
 TRADE_COLUMNS = (
@@ -88,73 +85,44 @@ def simulate(
     """Runs the overlay. `forced_targets` (decision index -> target) replays the targets of
     another run (used for the zero-cost gross track: same decisions, no costs)."""
     n = len(inp.index)
-    cash, shares, current = float(bt.initial_capital), 0.0, 0.0
-    dd = DrawdownMonitor(risk.drawdown, hwm=cash)
-    sess = SessionMonitor(risk.session, last_equity=cash)
-    stop = math.nan
-    stop_lockout = False
+    cash, shares = float(bt.initial_capital), 0.0
+    rm = RiskManager(risk, cash)
     entry: dict[str, Any] | None = None
     targets: dict[int, float] = {}
     decisions, rows, fills, trades = [], [], [], []
 
     def decide(t: int, equity: float, triggered: bool, touch: bool) -> None:
-        nonlocal stop_lockout
-        req = float(inp.requested[t])
-        reasons: list[str] = []
         if forced_targets is not None:
-            targets[t] = forced_targets.get(t, current)
+            targets[t] = forced_targets.get(t, rm.current_target)
             return
-        if req > 0:
-            sized, why = size_exposure(
-                risk.sizing, close=inp.closes[t], realized_vol=inp.vol[t], atr=inp.atr[t]
-            )
-            if why == "risk_input_undefined":
-                reasons.append(why)
-            elif sized < req:
-                reasons.append(f"sizing_{why}")
-        else:
-            sized = 0.0
-        approved, lim = cap_exposure(sized, risk.limits, equity=equity)
-        if lim:
-            reasons.append(lim)
-        if triggered:
-            stop_lockout = True
-        if stop_lockout:
-            if req == 0:
-                stop_lockout = False  # strategy signal reset: re-entry allowed again
-            elif approved > 0:
-                approved = 0.0
-                reasons.append("stop_triggered" if triggered else "stop_lockout_until_signal_reset")
-        if dd.state == LOCKED:
-            if risk.drawdown.action == "force_flat" and approved > 0:
-                approved = 0.0
-                reasons.append("drawdown_lock_flat")
-            elif approved > current:
-                approved = current
-                reasons.append("drawdown_lock_no_increase")
-        if sess.locked and approved > current:
-            approved = current
-            reasons.append("session_lock_no_increase")
-        target = approved
-        targets[t] = target
+        d = rm.decide(
+            requested=float(inp.requested[t]),
+            close=inp.closes[t],
+            realized_vol=inp.vol[t],
+            atr=inp.atr[t],
+            equity=equity,
+            triggered=triggered,
+            touch=touch,
+        )
+        targets[t] = d.approved_exposure
         decisions.append(
             {
                 "bar_ts": inp.index[t],
                 "observed_at": inp.observed_at[t],
                 "effective_at": inp.effective_at[t],
                 "strategy_state": inp.states[t],
-                "requested_exposure": req,
-                "sized_exposure": sized,
-                "approved_exposure": approved,
-                "target_exposure": target,
-                "intervention": bool(abs(approved - req) > EPS),
-                "reasons": ";".join(reasons),
-                "risk_state": LOCKED if (dd.state == LOCKED or sess.locked) else dd.state,
-                "drawdown": equity / dd.hwm - 1 if dd.hwm > 0 else math.nan,
-                "high_water_mark": dd.hwm,
-                "stop_level": stop,
-                "stop_triggered": triggered,
-                "stop_intraday_touch": touch,
+                "requested_exposure": d.requested_exposure,
+                "sized_exposure": d.sized_exposure,
+                "approved_exposure": d.approved_exposure,
+                "target_exposure": d.approved_exposure,
+                "intervention": d.intervention,
+                "reasons": ";".join(d.reasons),
+                "risk_state": d.risk_state,
+                "drawdown": d.drawdown,
+                "high_water_mark": d.high_water_mark,
+                "stop_level": d.stop_level,
+                "stop_triggered": d.stop_triggered,
+                "stop_intraday_touch": d.stop_intraday_touch,
                 "realized_vol": inp.vol[t],
                 "atr": inp.atr[t],
             }
@@ -165,41 +133,26 @@ def simulate(
 
     for t in range(inp.start, n):
         cost_today, traded, executed = 0.0, 0.0, False
-        target = targets.get(t - 1, current)
-        price_open = float(inp.opens[t])
-        eq_now = cash + shares * price_open
-        actual = shares * price_open / eq_now if eq_now > 0 else 0.0
-        # Trade when entering, exiting, or when the ACTUAL exposure at this open differs from
-        # the target by at least the rebalance band (drift is corrected, small moves are not).
-        enter_or_exit = (target <= EPS) != (shares <= EPS)
-        if enter_or_exit or (target > EPS and abs(actual - target) >= risk.rebalance_band):
+        target = targets.get(t - 1, rm.current_target)
+        price = float(inp.opens[t])
+        # Trade on entry/exit, or when the ACTUAL exposure at this open differs from the target
+        # by at least the rebalance band (drift is corrected, small moves are not).
+        order = plan_order(
+            target, cash=cash, shares=shares, price=price, band=risk.rebalance_band, bt=bt
+        )
+        if order is not None:
             if inp.index[t] != pd.Timestamp(inp.effective_at[t - 1]):
                 raise ValueError(
                     "next bar is not the next exchange session (missing session in data)"
                 )
-            price = float(inp.opens[t])
             eq_open = cash + shares * price
             was_flat = shares <= EPS
-            if target <= EPS:
-                notional, side = shares * price, "sell"
-            else:
-                desired, value = target * eq_open, shares * price
-                if desired > value:
-                    notional = min(desired - value, buy_notional(cash, bt)) if cash > 0 else 0.0
-                    side = "buy"
-                else:
-                    notional, side = value - desired, "sell"
-            costs = order_costs(notional, bt)
-            if side == "buy":
-                shares += notional / price
-                cash -= notional + costs.total
-            else:
-                shares = 0.0 if target <= EPS else shares - notional / price
-                cash += notional - costs.total
+            cash, shares, costs = apply_order(order, cash=cash, shares=shares, price=price, bt=bt)
+            notional = order.notional
             fills.append(
                 {
                     "ts": inp.index[t],
-                    "side": side,
+                    "side": order.side,
                     "price": price,
                     "notional": notional,
                     "commission": costs.commission,
@@ -210,13 +163,12 @@ def simulate(
                     "signal_observed_at": inp.observed_at[t - 1],
                 }
             )
-            if was_flat and shares > EPS:
+            entered = was_flat and shares > EPS
+            if entered:
                 entry = {"t": t, "equity": eq_open, "price": price, "costs": 0.0}
-                stop = stop_level(
-                    risk.stop, entry_price=price, atr_at_decision=float(inp.atr[t - 1])
-                )
             if entry is not None:
                 entry["costs"] += costs.total
+            pnl: float | None = None
             if shares <= EPS and entry is not None:
                 pnl = cash - entry["equity"]
                 last = decisions[-1]["reasons"] if decisions else ""
@@ -233,17 +185,20 @@ def simulate(
                         "exit_reason": _exit_reason(last),
                     }
                 )
-                sess.record_round_trip(pnl)
-                entry, stop = None, math.nan
-            current, cost_today, traded, executed = target, costs.total, notional, True
+                entry = None
+            rm.on_fill(
+                target=target,
+                entered=entered,
+                exited=pnl is not None,
+                price=price,
+                atr_at_decision=float(inp.atr[t - 1]),
+                round_trip_pnl=pnl,
+            )
+            cost_today, traded, executed = costs.total, notional, True
 
         equity = cash + shares * inp.closes[t]
-        dd.update(equity)
-        sess.update(equity)
-        triggered, touch = (
-            evaluate_stop(stop, low=inp.lows[t], close=inp.closes[t])
-            if shares > EPS
-            else (False, False)
+        triggered, touch = rm.on_close(
+            equity, low=inp.lows[t], close=inp.closes[t], holding=shares > EPS
         )
         rows.append(
             {
@@ -258,13 +213,13 @@ def simulate(
                 "costs": cost_today,
                 "cash": cash,
                 "equity": equity,
-                "risk_state": LOCKED if (dd.state == LOCKED or sess.locked) else dd.state,
+                "risk_state": rm.risk_state,
             }
         )
         decide(t, equity, triggered, touch)
 
     pending = None
-    last_target = targets.get(n - 1, current)
+    last_target = targets.get(n - 1, rm.current_target)
     if n and (last_target <= EPS) != (shares <= EPS):
         pending = {
             "target_exposure": last_target,
@@ -289,7 +244,6 @@ def simulate(
         "targets": targets,
         "pending": pending,
         "open_position": open_position,
-        "dd": dd,
     }
 
 
