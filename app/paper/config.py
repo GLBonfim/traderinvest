@@ -1,4 +1,5 @@
-"""Paper-trading configuration. Historical replay only; no live mode, no broker, no network."""
+"""Paper-trading configuration. Local simulation only: historical replay and incremental
+processing of locally supplied bars. No live mode, no broker, no network."""
 
 import hashlib
 import json
@@ -8,7 +9,7 @@ from app.backtest.config import BacktestConfig
 from app.risk.config import SCENARIOS, RiskConfig
 
 PAPER_VERSION = "1.0.0"
-MODE = "historical_replay"  # the only mode that exists
+MODE = "paper_simulation"  # the only mode that exists (replay or incremental, both simulated)
 
 
 @dataclass(frozen=True)
@@ -19,7 +20,9 @@ class PaperConfig:
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
     # Hard safety limits enforced by the broker independently of the risk layer.
     max_gross_exposure: float = 1.0
-    cash_tolerance: float = 1e-6  # absolute; resulting cash below -tolerance is rejected
+    # max notional (currency) the broker may shave off a buy so that rounding never leaves
+    # negative cash; resulting cash below 0 is always rejected
+    cash_tolerance: float = 1e-6
 
     def __post_init__(self) -> None:
         if not 0 < self.max_gross_exposure <= 1:

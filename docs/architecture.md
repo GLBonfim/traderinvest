@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **Phase 11 — Risk Management**. This document describes what exists today and the intended
+Status: **Phase 12 — Paper Trading**. This document describes what exists today and the intended
 direction. Components for later phases are listed as *planned* and do not exist in code yet.
 
 ## Goals
@@ -56,6 +56,10 @@ A reproducible, testable, evidence-driven research platform that can:
 │  app.risk          RiskOverlay: requested -> approved        │                 │
 │                    exposure, [0,1] accounting reusing Phase 8│                 │
 │                    (risk-management.md)                      │                 │
+│  app.paper         PaperTrader: strategy -> RiskManager ->   │                 │
+│                    Instruction -> PaperBroker (local         │                 │
+│                    simulation), replay + incremental store,  │                 │
+│                    hash-chained ledger (paper-trading.md)    │                 │
 │  migrations/       Alembic (URL from env, never from .ini)   │                 │
 └──────────────────────────────────────────────────────────────┼─────────────────┘
                                                                │ 127.0.0.1:5432
@@ -64,6 +68,19 @@ A reproducible, testable, evidence-driven research platform that can:
                                               │ volume pgdata, TZ=UTC          │
                                               └────────────────────────────────┘
 ```
+
+## Dependency direction (Phases 3–12)
+
+Imports only point upstream; there are no cycles (checked with `git grep` over `app/`):
+
+```
+candles ← price_action, indicators ← regimes ← strategies ← backtest ← validation ← ml
+                                                           backtest, validation ← risk ← paper
+```
+
+`app.paper` depends on `backtest` (costs, metrics, session timing), `risk` (RiskManager,
+`plan_order`/`apply_order`), `strategies`, `indicators`, `data.calendar` and `core.safety`;
+nothing imports `app.paper`. It has no network or broker imports (AST-checked test).
 
 ## Domain model: separating what is traded from where data comes from
 
@@ -139,7 +156,7 @@ Created only when the corresponding phase starts:
 app/
 ├── features/
 ├── signals/       SignalEngine, DecisionEngine
-├── execution/     Broker interface, PaperBroker
+├── execution/     Broker interface (paper broker exists in app/paper; no real broker)
 └── dashboard/     Streamlit
 ```
 
@@ -149,7 +166,8 @@ app/
 - Candlestick, price-action, indicator and regime observations and strategy states are
   computed on demand and not persisted (ADR-0010, ADR-0012, ADR-0014, ADR-0015, ADR-0016).
 - Backtest results are computed on demand and not persisted yet (experiment tracking: later).
-- No real or paper execution exists.
+- No real execution exists. Paper trading (Phase 12) is a local simulation; its state and
+  ledger are files under the git-ignored `data/paper/`, not database tables.
 - The app runs on the host; only PostgreSQL is containerised (no app Dockerfile yet).
 - No CI pipeline yet.
 - `/health` can take up to ~2× `DB_CONNECT_TIMEOUT_S` to report `503` when the DB is down

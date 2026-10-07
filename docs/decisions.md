@@ -310,6 +310,40 @@ acceptance; they are superseded by a new ADR.
 - **Consequences:** The effect of each control is measurable against an identical control.
   Results show the expected return/risk trade-off; locks and stops are path-dependent.
 
+## ADR-0021 — Paper trading: one state machine, durable file ledger, point-in-time IDs
+
+- **Status:** Accepted (2026-10-07, Phase 12)
+- **Context:** The Phase 12 WIP (`94480d0`) offered historical replay only, named every record
+  with a hash of the whole dataset (appending a bar renamed history), did not report pending
+  rebalances and had no persistent state.
+- **Decision:**
+  - Paper trading is a **local simulation**; it does not transmit orders to any brokerage or
+    market. `TradingMode` stays {disabled, paper}; `refuse_real_money_order()` stays
+    unconditional; `app/paper` has no network/broker imports (tested).
+  - One per-session state machine (`PaperTrader.process`) drives both historical replay and
+    incremental processing, so they are equivalent by construction (and tested to be).
+  - Flow: strategy state → RiskManager → risk-approved `Instruction` → `PaperBroker`; the broker
+    accepts nothing else. Execution at the next XNYS open with Phase 8 costs via the Phase 11
+    `plan_order`/`apply_order`.
+  - Record IDs from creation-time information only (account = config + strategy + instrument +
+    timeframe; record = account + type + session date; ledger event = account + sequence).
+    Dataset fingerprints are report metadata only.
+  - Durable state: per account, `state.json` (versioned, validated, deterministic, atomic
+    replace) + `ledger.jsonl` (append-only, SHA-256 hash chain) + `manifest.json`, under the
+    git-ignored `data/paper/accounts/`. No database migration: the ledger is append-only, per
+    account and never queried relationally.
+  - Commit = ledger append (fsync) then atomic state write; an interrupted commit is completed
+    only if re-processing reproduces the written events exactly. Corrupt, edited, truncated or
+    incompatible files raise; nothing is ever repaired or rewritten.
+  - Accounting: average cost with costs capitalised; total P&L = realized + unrealized = equity
+    − initial. Cash may never be negative: the broker shaves ≤ `cash_tolerance` (1e-6) off a
+    buy to absorb the Phase 8 `buy_notional` rounding residue (~1e-11), the only deviation
+    from Phase 8/11 arithmetic.
+  - Pending kinds none/entry/exit/rebalance; fill actions entry/add/reduce/exit.
+- **Consequences:** Restart and idempotency are testable properties (same bar twice, restart,
+  crash between ledger and state). Paper equals Phase 8/11 within 1e-6 currency (not bit-exact).
+  Concurrency (several writers per account) and a real broker remain out of scope.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

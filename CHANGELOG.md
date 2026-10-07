@@ -5,6 +5,42 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-10-07 — Phase 12: Paper Trading
+
+Completes the Phase 12 WIP (`94480d0`) in a follow-up commit. Paper trading is a local
+simulation; it does not transmit orders to any brokerage or market.
+
+### Added
+- `PaperTrader`: one per-session state machine (open: execute pending instruction; close:
+  value, monitors, stop; decision: strategy → RiskManager → instruction; snapshot) shared by
+  historical replay and incremental processing.
+- Incremental, restart-safe accounts (`PaperStore`, CLI `run`/`status`): versioned, validated,
+  deterministic `state.json` (atomic replace), append-only SHA-256 hash-chained `ledger.jsonl`,
+  `manifest.json` provenance; idempotent per session; crash between ledger and state recovered
+  only if re-processing reproduces the written events; corrupt/edited/incompatible files refused.
+- Account accounting: average cost with capitalised costs; realized, unrealized and total P&L
+  (= equity − initial) on fills, snapshots and metrics; snapshots reproducible from the ledger.
+- Pending kinds (none/entry/exit/rebalance) and fill actions (entry/add/reduce/exit).
+- 61 paper unit tests (incl. replay vs bar-by-bar with restarts, idempotency, crash recovery,
+  tampering, data revision, exact rebalance P&L example, no-bypass of the risk layer, prefix and
+  future-mutation tests including IDs) and 4 SPY integration tests (`test_paper_spy.py`).
+- `docs/paper-trading.md`, ADR-0021.
+
+### Fixed (Phase 12 WIP)
+- Record IDs hashed a fingerprint of the whole dataset: appending or changing future bars
+  renamed historical decisions/orders/fills. IDs are now point-in-time (account + type +
+  session date); the dataset fingerprint is report metadata only.
+- Phase 8 equivalence test compared metric dicts with `==` (NaN ≠ NaN) and paper metrics lacked
+  realized/unrealized/total P&L; now NaN-aware with explicit tolerances and complete fields.
+- A pending rebalance at the end of a replay was reported as neither pending nor executed.
+- Negative cash residue (~−1.5e-11) inherited from the Phase 8 `buy_notional` rounding (exposure
+  1 + 2e-16): the paper broker never books negative cash (shaves ≤ 1e-6 off such buys).
+- Ruff E501 and formatting failures in the Phase 12 tests.
+
+### Unchanged
+- Phases 3–11 behaviour (Phase 11 refactor into `app/risk/manager.py` verified bit-identical to
+  `13a462a` on SPY: 36/36 scenario × strategy runs). No database migration.
+
 ## [0.11.0] — 2026-10-07 — Phase 11: Risk Management
 
 ### Added

@@ -24,7 +24,8 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 | 9 | Statistical validation: moving-block bootstrap intervals, paired comparisons, Holm/BH, cost sensitivity, slices | ✅ Done |
 | 10 | Machine learning research: logistic regression & random forest, chronological split, pre-declared edge rule — **NO INCREMENTAL EDGE FOUND** | ✅ Done |
 | 11 | Risk management: sizing, limits, drawdown/session locks, close-based stops, overlay vs control | ✅ Done |
-| 12–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
+| 12 | Paper trading: local simulation, strategy → risk → paper broker, historical replay + incremental restart-safe accounts, hash-chained ledger | ✅ Done |
+| 13–15 | dashboard, alerts, broker | Not started |
 
 The platform can ingest and validate SPY daily bars and describe candle geometry and
 candlestick patterns, describe market structure and price-action events, and compute technical
@@ -39,7 +40,9 @@ baseline from buy & hold — an exploratory, not conclusive, result. Phase 10 te
 supervised ML adds information beyond the baselines under a pre-declared protocol: **NO
 INCREMENTAL EDGE FOUND** (out-of-sample AUC ≈ 0.5, accuracy below "always up"). Phase 11 adds a
 risk-management layer (sizing, limits, locks, stops) measured against a no-overlay control;
-it is a control layer, not an alpha source. There are
+it is a control layer, not an alpha source. Phase 12 adds paper trading: a **local
+simulation that does not transmit orders to any brokerage or market**, with restart-safe
+accounts and an append-only ledger. There are
 **no indicators, no signals, no strategies and no trading logic** yet.
 
 ## Principles
@@ -67,6 +70,7 @@ app/
 ├── validation/ Block-bootstrap uncertainty, paired comparisons, Holm/BH, cost sensitivity
 ├── ml/         Point-in-time features, chronological split, LR/RF, Phase 8/9 evaluation
 ├── risk/       Risk overlay: sizing, limits, drawdown/session locks, stops, diagnostics
+├── paper/      Paper trading (local simulation): RiskManager -> PaperBroker, replay, durable accounts
 └── database/   SQLAlchemy 2 models + session
 migrations/     Alembic migrations
 tests/          unit + integration (PostgreSQL) tests
@@ -188,6 +192,18 @@ uv run python -m app.risk.cli run --symbol SPY
 
 Architecture, formulas, stop/OHLC conventions and results: [docs/risk-management.md](docs/risk-management.md).
 
+Paper trading — a local simulation; it does not transmit orders to any brokerage or market.
+Historical replay of the six baselines (reports in git-ignored `data/paper/`), and incremental,
+restart-safe accounts that process each new completed bar from the local database once:
+
+```bash
+uv run python -m app.paper.cli replay --symbol SPY
+uv run python -m app.paper.cli run --symbol SPY --strategy sma_trend   # re-run after each ingestion
+uv run python -m app.paper.cli status --symbol SPY --strategy sma_trend
+```
+
+Lifecycle, accounting, ledger and restart guarantees: [docs/paper-trading.md](docs/paper-trading.md).
+
 `/health` returns `200` with `"database": {"status": "ok"}` when PostgreSQL is reachable, and
 `503` with `"status": "degraded"` when it is not.
 
@@ -234,7 +250,8 @@ must earn its place through ablation testing. See [docs/architecture.md](docs/ar
 
 Implemented (Phase 11) as a measurement/control overlay: fixed-fraction, volatility-target and
 ATR-risk sizing, exposure caps (no leverage), drawdown and session locks, close-based stops.
-Every decision records requested vs approved exposure. Paper trading only until full validation.
+Every decision records requested vs approved exposure. Paper trading (Phase 12) routes every
+instruction through this risk layer; it is a local simulation only.
 
 ## Limitations
 
