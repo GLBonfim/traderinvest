@@ -209,6 +209,23 @@ acceptance; they are superseded by a new ADR.
   combined `config_fingerprint` covers all three. Volatility labels are relative to the trailing
   history and unavailable for the first 272 daily bars.
 
+## ADR-0016 — Baseline strategy contract and timing
+
+- **Status:** Accepted (2026-10-07, Phase 7)
+- **Decision:**
+  - A strategy declares its feature columns; the engine passes ONLY those columns to its rule
+    (isolation by construction). Six fixed baselines, LONG/FLAT only, no scores, no
+    combinations, no candlestick rules, no shorting.
+  - Three states: LONG, FLAT, INSUFFICIENT_DATA. Missing inputs never become FLAT.
+  - Timing: `observed_at` = session close of T, `effective_at` = next session open, both from
+    the XNYS calendar (known in advance, prefix-safe); `state_in_effect(T)` = state(T−1).
+    No execution price is attached.
+  - Parameters are fixed textbook conventions (SMA200, SMA20/50, RSI14 vs 50); no optimisation.
+  - States computed on demand; signal/trade persistence will be designed with backtesting and
+    experiment tracking (Phase 8+).
+- **Consequences:** Phase 8 receives unambiguous, point-in-time states and must make every
+  execution assumption (fill price, costs) explicit itself.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

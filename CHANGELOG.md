@@ -5,6 +5,24 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-07 — Phase 7: Baseline Strategies
+
+### Added
+- `app/strategies`: `Strategy` contract (declared features, LONG/FLAT/INSUFFICIENT_DATA),
+  six fixed baselines — buy & hold (benchmark), SMA200 trend, SMA20/50 crossover, RSI14 > 50,
+  price-action uptrend, regime `trending_up` — and `StrategyEngine` (on-demand features from
+  existing engines, declared-column isolation, calendar-based `observed_at`/`effective_at`,
+  `state_in_effect`, reasons, summary, combined fingerprint); CLI `python -m app.strategies.cli`.
+- 45 new tests (416 total): exact rules and boundaries, NaN ≠ FLAT, feature isolation,
+  calendar timestamps (holiday, weekend, early close), execution latency, Price Action
+  confirmation latency, prefix/full and future-mutation leakage tests with a leaky-rule
+  control, SPY integration regression snapshot of state counts.
+- `docs/baseline-strategies.md`, ADR-0016.
+
+### Not included (by design)
+- No returns, performance, backtesting, costs, fills, orders, sizing, optimisation, ML,
+  shorting, persistence or migrations.
+
 ## [0.6.0] — 2026-10-07 — Phase 6: Market Regimes
 
 ### Added

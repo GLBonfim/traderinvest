@@ -19,12 +19,15 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 | 4 | Price Action Engine: swings, structure, zones, breakouts, retests, rejections, ranges | ✅ Done |
 | 5 | Technical indicators: SMA, EMA, MACD, RSI, Stochastic, ROC, ATR, Bollinger, realized vol, relative volume, OBV | ✅ Done |
 | 6 | Market regimes: trend, volatility (causal percentile), momentum, participation, composite | ✅ Done |
-| 7–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
+| 7 | Baseline strategies: buy & hold, SMA trend, SMA crossover, RSI, price-action trend, regime trend (LONG/FLAT states only) | ✅ Done |
+| 8–15 | indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
 
 The platform can ingest and validate SPY daily bars and describe candle geometry and
 candlestick patterns, describe market structure and price-action events, and compute technical
 indicators and descriptive market regimes. Patterns, events, indicator values and regime labels
-are **observations/features, not trading signals or predictions**. There are
+are **observations/features, not trading signals or predictions**. Six fixed baseline strategies
+turn them into hypothetical LONG/FLAT states; **baseline strategies are research benchmarks, not
+evidence of profitability**, and nothing has been backtested yet. There are
 **no indicators, no signals, no strategies and no trading logic** yet.
 
 ## Principles
@@ -47,6 +50,7 @@ app/
 ├── price_action/ Price Action Engine: swings, structure, zones, events, outcomes, ranges
 ├── indicators/ Technical Indicator Engine: transparent formulas, warm-up catalog, CLI
 ├── regimes/    Market Regime Engine: trend/volatility/momentum/participation + composite
+├── strategies/ Six fixed baseline rules -> LONG/FLAT/INSUFFICIENT_DATA states (no orders)
 └── database/   SQLAlchemy 2 models + session
 migrations/     Alembic migrations
 tests/          unit + integration (PostgreSQL) tests
@@ -126,6 +130,15 @@ uv run python -m app.regimes.cli describe --symbol SPY
 ```
 
 Definitions, causal percentile and composite table: [docs/market-regimes.md](docs/market-regimes.md).
+
+Baseline strategy states (no returns, no performance — that is Phase 8):
+
+```bash
+uv run python -m app.strategies.cli run --symbol SPY
+```
+
+Rules, timing (`observed_at` / `effective_at`) and guarantees:
+[docs/baseline-strategies.md](docs/baseline-strategies.md).
 
 `/health` returns `200` with `"database": {"status": "ok"}` when PostgreSQL is reachable, and
 `503` with `"status": "degraded"` when it is not.
