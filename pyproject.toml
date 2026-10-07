@@ -1,24 +1,28 @@
 [project]
 name = "quant-platform"
-version = "0.1.0"
+version = "0.2.0"
 description = "Market analysis & algorithmic trading research platform (research-only; no real-money execution)."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.13",
+    "exchange-calendars>=4.13.2",
     "fastapi>=0.115",
+    "pandas>=3.0.6",
     "psycopg[binary]>=3.2",
     "pydantic>=2.8",
     "pydantic-settings>=2.4",
     "sqlalchemy>=2.0.30",
     "structlog>=24.4",
     "uvicorn[standard]>=0.30",
+    "yfinance>=1.7.0",
 ]
 
 [dependency-groups]
 dev = [
     "httpx2>=2.13.1",
     "mypy>=1.11",
+    "pandas-stubs>=3.0.5.260914",
     "pytest>=8.3",
     "ruff>=0.6",
 ]
@@ -57,3 +61,7 @@ python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
 files = ["app"]
+
+[[tool.mypy.overrides]]
+module = ["yfinance", "yfinance.*", "exchange_calendars", "exchange_calendars.*"]
+ignore_missing_imports = true

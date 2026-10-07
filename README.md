@@ -14,10 +14,11 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 |---|---|---|
 | 0 | Environment audit | ✅ Done |
 | 1 | Foundation: structure, config, PostgreSQL, migrations, logging, health check, tests | ✅ Done |
-| 2 | Market data (yfinance prototype, SPY daily), validation, storage | ⏳ Awaiting approval |
+| 2 | Market data: provider interface, yfinance SPY daily, NYSE calendar, validation, storage | ✅ Done |
 | 3–15 | Candles, price action, indicators, regimes, strategies, backtesting, validation, ML, risk, paper trading, dashboard, alerts, broker | Not started |
 
-There is currently **no market data, no analysis, no signals and no trading logic** in this repository.
+The platform can ingest and validate SPY daily bars. There is **no analysis, no indicators, no
+signals and no trading logic** yet.
 
 ## Principles
 
@@ -33,13 +34,15 @@ There is currently **no market data, no analysis, no signals and no trading logi
 app/
 ├── api/        FastAPI app (only /health for now)
 ├── core/       settings (env vars), structured logging, execution safety guard
+├── data/       providers (DataProvider, yfinance), NYSE calendar, normalization,
+│               validation, ingestion, CLI
 └── database/   SQLAlchemy 2 models + session
 migrations/     Alembic migrations
 tests/          unit + integration (PostgreSQL) tests
 docs/           architecture, decisions (ADRs), methodology
 ```
 
-Modules for later phases (`data/`, `candles/`, `price_action/`, …) are created only when their
+Modules for later phases (`candles/`, `price_action/`, …) are created only when their
 phase starts. See [docs/architecture.md](docs/architecture.md) and
 [docs/decisions.md](docs/decisions.md).
 
@@ -70,6 +73,15 @@ uv run uvicorn app.api.main:app --reload
 curl http://127.0.0.1:8000/health
 ```
 
+Ingest SPY daily history (yfinance, prototype only):
+
+```bash
+uv run python -m app.data.cli ingest --symbol SPY --start 1993-01-01   # --end defaults to today
+```
+
+Re-running is idempotent. See [docs/market-data.md](docs/market-data.md) for price semantics,
+session normalization and the data-quality checks.
+
 `/health` returns `200` with `"database": {"status": "ok"}` when PostgreSQL is reachable, and
 `503` with `"status": "degraded"` when it is not.
 
@@ -99,7 +111,7 @@ All settings come from environment variables (or `.env`). See [.env.example](.en
 
 | Provider | Role | Status |
 |---|---|---|
-| yfinance | Prototyping only (unofficial, ToS-restricted, ~730 days of 1h history) | Phase 2 |
+| yfinance | Prototyping only (unofficial, ToS-restricted, ~730 days of 1h history) | SPY daily ✅ |
 | Massive (Polygon) | Intended primary OHLCV provider | Future |
 | Alpha Vantage / FMP / FRED | Macro, calendars, point-in-time data | Future |
 
@@ -116,7 +128,7 @@ mandatory no-trade conditions. Paper trading only until full validation.
 
 ## Limitations
 
-- No market data or analysis exists yet.
+- Only SPY daily bars from yfinance; no analysis exists yet.
 - yfinance is unsuitable for production and limits intraday history.
 - Past performance in a backtest does not predict future results.
 

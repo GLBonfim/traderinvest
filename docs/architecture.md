@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **Phase 1 — Foundation**. This document describes what exists today and the intended
+Status: **Phase 2 — Market Data**. This document describes what exists today and the intended
 direction. Components for later phases are listed as *planned* and do not exist in code yet.
 
 ## Goals
@@ -26,6 +26,9 @@ A reproducible, testable, evidence-driven research platform that can:
 │  app.core.logging  structlog JSON, UTC, secret redaction     │                 │
 │  app.core.safety   real-money execution guard                │                 │
 │  app.database      SQLAlchemy 2 models + Base                │                 │
+│  app.data          DataProvider, YFinanceProvider, XNYS      │                 │
+│                    calendar, normalization, validation,      │                 │
+│                    ingestion, CLI  (see market-data.md)      │                 │
 │  migrations/       Alembic (URL from env, never from .ini)   │                 │
 └──────────────────────────────────────────────────────────────┼─────────────────┘
                                                                │ 127.0.0.1:5432
@@ -49,7 +52,7 @@ Strategies will reference an **instrument**, never a provider ticker or API. Bar
 providers can coexist for the same instrument (unique key includes `provider`), which enables
 cross-provider reconciliation.
 
-## Schema (migration `d77968d9c70f`)
+## Schema (migrations `d77968d9c70f`, `c4cb3e615291`)
 
 | Table | Purpose |
 |---|---|
@@ -57,7 +60,8 @@ cross-provider reconciliation.
 | `provider_symbols` | Provider-specific tickers for an instrument |
 | `price_bars` | OHLCV bars per (instrument, provider, timeframe, ts). `ts` = bar open, UTC. `is_closed` distinguishes forming vs closed bars. `adj_close` kept alongside raw prices |
 | `market_sessions` | Regular session open/close per exchange calendar and date |
-| `data_quality_events` | Every detected data problem, with the action taken |
+| `ingestion_runs` | One row per ingestion: request, `as_of`, provider version, counts, status |
+| `data_quality_events` | Every detected data problem, with the action taken and its run |
 
 Rules:
 
@@ -106,7 +110,6 @@ Created only when the corresponding phase starts:
 
 ```
 app/
-├── data/          providers/ (DataProvider interface, yfinance, massive), ingestion/, validation/
 ├── candles/       CandlestickEngine
 ├── price_action/  PriceActionEngine, support/resistance, breakouts
 ├── indicators/
@@ -121,9 +124,9 @@ app/
 └── dashboard/     Streamlit
 ```
 
-## Known limitations (Phase 1)
+## Known limitations
 
-- No market data, analysis, signals or trading logic exist.
+- No analysis, signals or trading logic exist. Market data: SPY daily from yfinance only.
 - The app runs on the host; only PostgreSQL is containerised (no app Dockerfile yet).
 - No CI pipeline yet.
 - `/health` can take up to ~2× `DB_CONNECT_TIMEOUT_S` to report `503` when the DB is down

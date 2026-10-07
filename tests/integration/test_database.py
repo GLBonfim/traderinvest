@@ -24,6 +24,7 @@ EXPECTED_TABLES = {
     "price_bars",
     "market_sessions",
     "data_quality_events",
+    "ingestion_runs",
 }
 
 

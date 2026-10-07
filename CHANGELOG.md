@@ -5,6 +5,26 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-07 — Phase 2: Market Data Foundation
+
+### Added
+- `DataProvider` interface and `YFinanceProvider` (daily; `auto_adjust=False`, `repair=False`),
+  injectable fetcher for offline tests.
+- XNYS trading calendar (`exchange_calendars`), early-close detection, `market_sessions` upsert.
+- Timezone/session normalization: daily bars stamped with session open (UTC).
+- Data-quality validation (16 checks) with exclude-vs-flag policy; issues persisted to
+  `data_quality_events`.
+- Idempotent persistence of raw + adjusted prices with revision detection and adj_close noise
+  tolerance.
+- `ingestion_runs` table (migration `c4cb3e615291`) and `data_quality_events.ingestion_run_id`.
+- Instrument registry (SPY) with provider symbol mapping.
+- CLI: `python -m app.data.cli ingest`.
+- 48 new tests (76 total); `docs/market-data.md`; ADR-0009.
+
+### Data
+- First ingestion: 8,479 SPY daily bars (1993-01-29 → 2026-10-06), 0 excluded, 0 missing sessions,
+  8 flagged outliers (kept).
+
 ## [0.1.0] — 2026-10-07 — Phase 1: Foundation
 
 ### Added

@@ -91,6 +91,23 @@ acceptance; they are superseded by a new ADR.
   through the API/DB layer, never directly from providers. Not added as a dependency until used.
 - **Consequences:** A React/Next frontend may replace it later if requirements outgrow Streamlit.
 
+## ADR-0009 — Daily bars stamped with session open (UTC); data-quality policy
+
+- **Status:** Accepted (2026-10-07, Phase 2)
+- **Decision:**
+  - Daily `price_bars.ts` = XNYS session open in UTC, mapped from the provider's exchange-local
+    date. `is_closed` = session close <= `as_of`.
+  - Structurally invalid bars are **excluded** and recorded; plausible-but-unusual bars
+    (outliers, zero volume, splits) are **kept and flagged**. Outliers are never removed.
+  - Changes to stored bars are applied but recorded: raw OHLCV revisions of closed bars as
+    `bar_revised` warnings; adj_close restatements as one info event per run.
+  - adj_close differences <= 1e-5 relative are treated as provider float noise: the stored value is
+    kept and the count is logged (`adj_close_noise_ignored`). Evidence: consecutive Yahoo requests
+    differed by up to 1.4e-6 relative on ~7,000 SPY bars; a real dividend restatement is ~1e-3.
+  - Every ingestion is an `ingestion_runs` row; events reference their run.
+- **Consequences:** Re-runs are idempotent. Daily `ts` is comparable with future intraday bars
+  (same session-open anchor). The noise tolerance must be revisited per provider.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

@@ -33,6 +33,7 @@ from app.database.base import Base, TimestampMixin
 ASSET_CLASSES = ("etf", "equity", "index", "future", "fx", "crypto", "commodity")
 TIMEFRAMES = ("1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w")
 SEVERITIES = ("info", "warning", "error", "critical")
+RUN_STATUSES = ("running", "succeeded", "failed")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -119,6 +120,37 @@ class MarketSession(TimestampMixin, Base):
     source: Mapped[str] = mapped_column(String(64), comment="Calendar library/provider used")
 
 
+class IngestionRun(Base):
+    """One execution of a provider ingestion: what was requested, from where, and the outcome.
+
+    Gives every stored bar and data-quality event a reproducible provenance.
+    """
+
+    __tablename__ = "ingestion_runs"
+    __table_args__ = (CheckConstraint(_in("status", RUN_STATUSES), name="status"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    provider_version: Mapped[str | None] = mapped_column(String(64))
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id", ondelete="CASCADE"))
+    timeframe: Mapped[str] = mapped_column(String(8))
+    requested_start: Mapped[date] = mapped_column(Date)
+    requested_end: Mapped[date] = mapped_column(Date)
+    as_of: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), comment="Decision time: bars closing after this are not closed"
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(16))
+    bars_received: Mapped[int] = mapped_column(server_default="0")
+    bars_inserted: Mapped[int] = mapped_column(server_default="0")
+    bars_updated: Mapped[int] = mapped_column(server_default="0")
+    bars_unchanged: Mapped[int] = mapped_column(server_default="0")
+    bars_excluded: Mapped[int] = mapped_column(server_default="0")
+    issues_count: Mapped[int] = mapped_column(server_default="0")
+    error: Mapped[str | None] = mapped_column(Text)
+
+
 class DataQualityEvent(Base):
     """Every data problem is recorded here, together with the action taken (never silent)."""
 
@@ -126,6 +158,9 @@ class DataQualityEvent(Base):
     __table_args__ = (CheckConstraint(_in("severity", SEVERITIES), name="severity"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ingestion_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ingestion_runs.id", ondelete="SET NULL"), index=True
+    )
     detected_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

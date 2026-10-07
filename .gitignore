@@ -12,7 +12,7 @@ credentials*.json
 
 # ── Market data / research artifacts ────────────────────
 # Data is reproducible from providers and must not live in Git.
-data/
+/data/
 *.csv
 *.parquet
 *.feather
