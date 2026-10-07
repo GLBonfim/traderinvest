@@ -1,0 +1,132 @@
+# Architecture
+
+Status: **Phase 1 — Foundation**. This document describes what exists today and the intended
+direction. Components for later phases are listed as *planned* and do not exist in code yet.
+
+## Goals
+
+A reproducible, testable, evidence-driven research platform that can:
+
+1. ingest and validate market data without silently altering it;
+2. analyse market context (regime, structure, levels, candles, volume, volatility);
+3. test hypotheses with temporal, out-of-sample methodology;
+4. output `LONG` / `SHORT` / `NO TRADE` decisions with probabilities, risk and invalidation;
+5. paper-trade, and only much later (with explicit approval) connect to a broker.
+
+## Current components
+
+```
+┌──────────────────────────── host (uv, Python 3.12) ────────────────────────────┐
+│                                                                                │
+│  app.api.main  (FastAPI)                                                       │
+│     ├── middleware: request_id + structured access log                        │
+│     └── GET /health ──► app.database.session.get_engine() ──┐                  │
+│                                                              │                 │
+│  app.core.config   Settings from env / .env (pydantic)       │                 │
+│  app.core.logging  structlog JSON, UTC, secret redaction     │                 │
+│  app.core.safety   real-money execution guard                │                 │
+│  app.database      SQLAlchemy 2 models + Base                │                 │
+│  migrations/       Alembic (URL from env, never from .ini)   │                 │
+└──────────────────────────────────────────────────────────────┼─────────────────┘
+                                                               │ 127.0.0.1:5432
+                                              ┌────────────────▼───────────────┐
+                                              │ Docker: postgres:16-alpine     │
+                                              │ volume pgdata, TZ=UTC          │
+                                              └────────────────────────────────┘
+```
+
+## Domain model: separating what is traded from where data comes from
+
+| Concept | Example | Where |
+|---|---|---|
+| Underlying | S&P 500 | `instruments.underlying` |
+| Instrument | SPY (ETF) | `instruments` row |
+| Exchange | ARCX (NYSE Arca, ISO 10383 MIC) | `instruments.exchange` |
+| Provider ticker | `SPY` on yfinance, `SPY` on Massive, `^GSPC` for the index | `provider_symbols` |
+| Data provider | yfinance, massive, alpha_vantage | `price_bars.provider`, `provider_symbols.provider` |
+
+Strategies will reference an **instrument**, never a provider ticker or API. Bars from different
+providers can coexist for the same instrument (unique key includes `provider`), which enables
+cross-provider reconciliation.
+
+## Schema (migration `d77968d9c70f`)
+
+| Table | Purpose |
+|---|---|
+| `instruments` | Tradable instruments and their underlying, venue, currency, timezone |
+| `provider_symbols` | Provider-specific tickers for an instrument |
+| `price_bars` | OHLCV bars per (instrument, provider, timeframe, ts). `ts` = bar open, UTC. `is_closed` distinguishes forming vs closed bars. `adj_close` kept alongside raw prices |
+| `market_sessions` | Regular session open/close per exchange calendar and date |
+| `data_quality_events` | Every detected data problem, with the action taken |
+
+Rules:
+
+- **All timestamps are `TIMESTAMPTZ` in UTC.** DB sessions are forced to `timezone=UTC`.
+- **Numeric, not float**, for prices (`NUMERIC(18,6)`) and volume (`NUMERIC(28,8)`, room for
+  fractional crypto volume later).
+- **The database enforces structure, not market sanity.** Constraints cover uniqueness and
+  enumerations (timeframe, asset class, severity). Checks such as `high >= low` belong to the
+  data-validation layer (Phase 2), which must record a `data_quality_events` row instead of
+  silently rejecting or "fixing" data.
+- Deterministic constraint names (naming convention in `app/database/base.py`) keep migrations
+  stable across environments.
+- Every model change requires a migration; `tests/integration` runs `alembic check` to enforce it.
+
+## Configuration
+
+All configuration comes from environment variables, optionally loaded from `.env` (git-ignored).
+`.env.example` documents every variable. Secrets are `SecretStr` and the DB URL is a SQLAlchemy
+`URL` object, so neither prints the password in `repr`/`str` or logs.
+
+## Logging
+
+structlog → JSON lines on stdout, one schema for app and stdlib loggers (uvicorn, alembic):
+`timestamp` (ISO-8601 UTC), `level`, `logger`, `event`, plus context (`request_id`, ...).
+Keys containing `password`, `secret`, `token`, `api_key`, `authorization` are redacted.
+Set `LOG_FORMAT=console` for human-readable output during development.
+
+## Execution safety
+
+See ADR-0006. In short: `TradingMode` has only `disabled` and `paper`; `live` cannot be configured;
+`refuse_real_money_order()` always raises; the API exposes no order endpoints (tested).
+
+## Testing strategy
+
+| Layer | Location | Needs DB |
+|---|---|---|
+| Unit | `tests/unit` | No |
+| Integration | `tests/integration` (marker `integration`) | Yes — a throwaway `<db>_test` database is created and dropped; the dev DB is untouched. Skipped if PostgreSQL is down |
+
+Planned test families (later phases): look-ahead/leakage tests (features at `t` must be invariant
+to any data at `t+1..`), point-in-time tests, backtest accounting, transaction costs.
+
+## Planned module layout
+
+Created only when the corresponding phase starts:
+
+```
+app/
+├── data/          providers/ (DataProvider interface, yfinance, massive), ingestion/, validation/
+├── candles/       CandlestickEngine
+├── price_action/  PriceActionEngine, support/resistance, breakouts
+├── indicators/
+├── regimes/       MarketRegimeEngine
+├── features/
+├── strategies/
+├── models/        ML (baseline → logistic → trees → boosting)
+├── backtesting/   temporal engine, walk-forward, costs
+├── risk/          RiskManager
+├── signals/       SignalEngine, DecisionEngine
+├── execution/     Broker interface, PaperBroker
+└── dashboard/     Streamlit
+```
+
+## Known limitations (Phase 1)
+
+- No market data, analysis, signals or trading logic exist.
+- The app runs on the host; only PostgreSQL is containerised (no app Dockerfile yet).
+- No CI pipeline yet.
+- `/health` can take up to ~2× `DB_CONNECT_TIMEOUT_S` to report `503` when the DB is down
+  (connection attempt + pool pre-ping).
+- uvicorn prints its first two boot lines before the app's logging is configured, so those two
+  lines are plain text rather than JSON.

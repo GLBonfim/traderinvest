@@ -1,0 +1,60 @@
+# ── Secrets ─────────────────────────────────────────────
+# Never commit credentials. Only .env.example is versioned.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials*.json
+
+# ── Market data / research artifacts ────────────────────
+# Data is reproducible from providers and must not live in Git.
+data/
+*.csv
+*.parquet
+*.feather
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.joblib
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+models/artifacts/
+mlruns/
+experiments/outputs/
+
+# ── Python ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.ipynb_checkpoints/
+
+# ── Logs ────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Editors / OS ────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Local tool state ────────────────────────────────────
+.claude/
