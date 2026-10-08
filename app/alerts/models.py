@@ -25,6 +25,7 @@ SRC_RISK = "RiskManager"
 SRC_PAPER = "PaperTrading"
 SRC_SYSTEM = "System"
 SRC_SAFETY = "Safety"
+SRC_OPS = "Operations"
 
 # event_type -> (severity, source). Severity describes operational attention, never a
 # financial opportunity.
@@ -67,6 +68,12 @@ EVENT_TYPES: dict[str, tuple[str, str]] = {
     "SAFETY_EXPOSURE_ABOVE_LIMIT": (CRITICAL, SRC_SAFETY),
     "SAFETY_NEGATIVE_POSITION": (CRITICAL, SRC_SAFETY),
     "SAFETY_ACCOUNTING_RECONCILIATION_FAILED": (CRITICAL, SRC_SAFETY),
+    # operations (Phase 14.5): pipeline orchestration events
+    "OPS_STAGE_FAILED": (WARNING, SRC_OPS),
+    "OPS_SESSION_DATA_MISSING": (WARNING, SRC_OPS),
+    "OPS_CATCH_UP_REQUIRED": (INFO, SRC_OPS),
+    "OPS_LOCK_CONFLICT": (WARNING, SRC_OPS),
+    "OPS_REPEATED_FAILURE": (CRITICAL, SRC_OPS),
     # channel self-test (never a market or trading event)
     "TEST_NOTIFICATION": (INFO, SRC_SYSTEM),
 }

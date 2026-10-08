@@ -5,6 +5,32 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.5] — 2026-10-08 — Phase 14.5: Daily Operations & Scheduler
+
+Intermediate phase (SemVer 0.x); broker integration remains Phase 15.
+
+### Added
+- `app/operations`: orchestration-only daily pipeline — PRECHECK, then per completed XNYS
+  session INGEST → VALIDATE → PAPER → ALERTS, then HEALTH → COMPLETE — delegating to the
+  existing ingestion, stored-bar checks, Phase 12 paper store and Phase 14 alert run.
+- XNYS session awareness (official close incl. early closes + 30 min grace; holidays,
+  weekends, DST); `NO_NEW_COMPLETED_SESSION` no-op; ordered catch-up (at most 10 sessions per
+  run); bounded late-data retries (never fabricated); per-stage failure policy with isolated
+  paper-account failures; crash recovery through subsystem idempotency.
+- Single-run file lock (owner metadata; stale only if the same-host process is verified dead;
+  `unlock --force`); hash-chained run history + atomic checkpoint in git-ignored
+  `data/operations/`; operational metrics.
+- Local long-running scheduler with injected clock/sleep and heartbeat; CLI
+  `python -m app.operations.cli` (`run [--dry-run]`, `status`, `history`, `verify`, `next`,
+  `scheduler`, `unlock --force`).
+- Dashboard page "Operations" (13th) with dry-run and PAPER SIMULATION / LOCAL OPERATIONS run.
+- Operational alert types: `OPS_STAGE_FAILED`, `OPS_SESSION_DATA_MISSING`,
+  `OPS_CATCH_UP_REQUIRED`, `OPS_LOCK_CONFLICT`, `OPS_REPEATED_FAILURE`.
+- 41 operations unit tests (calendar, pipeline, failure injection, crash recovery, locking,
+  scheduler with frozen time, dry-run, persistence, safety) and 5 SPY integration tests
+  (T-3 → T catch-up equal to the standalone tools, late data, provider failure, crashes).
+- `docs/operations.md`, ADR-0024.
+
 ## [0.14.0] — 2026-10-08 — Phase 14: Alerts & Monitoring
 
 ### Added

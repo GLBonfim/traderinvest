@@ -377,7 +377,17 @@ def test_catalog_severities_are_the_three_levels() -> None:
     assert {s for s, _ in EVENT_TYPES.values()} == {INFO, WARNING, CRITICAL}
     assert all(
         t.startswith(
-            ("DATA_", "REGIME_", "STRATEGY_", "RISK_", "PAPER_", "SYSTEM_", "SAFETY_", "TEST_")
+            (
+                "DATA_",
+                "REGIME_",
+                "STRATEGY_",
+                "RISK_",
+                "PAPER_",
+                "SYSTEM_",
+                "SAFETY_",
+                "TEST_",
+                "OPS_",
+            )
         )
         for t in EVENT_TYPES
     )

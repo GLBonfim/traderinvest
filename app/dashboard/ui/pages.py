@@ -14,6 +14,7 @@ from app.dashboard import charts
 from app.dashboard.config import DISCLAIMERS, PAPER_LABEL, PAPER_ROOT, RESEARCH_ROOT
 from app.dashboard.services import alerts as alerts_svc
 from app.dashboard.services import analysis, explain, health, market, paper, research
+from app.dashboard.services import operations as ops_svc
 from app.dashboard.ui.context import CONFIG_KEY, Context, cached_paper_inputs, cached_risk_table
 from app.database.session import get_engine, get_session_factory
 from app.risk.config import SCENARIOS
@@ -1062,6 +1063,90 @@ def alerts_monitoring(ctx: Context) -> None:
         st.json(d["payload"])
 
 
+# ── 13. Operations ──
+
+OPS_LABEL = "PAPER SIMULATION / LOCAL OPERATIONS"
+
+
+def operations(ctx: Context) -> None:
+
+    from app.operations.config import OPS_ROOT
+
+    st.title("Operations")
+    st.caption(
+        f"{OPS_LABEL}. The daily pipeline (precheck -> ingest -> validate -> paper -> alerts -> "
+        "health) runs locally on completed XNYS sessions only. It never sends an order or "
+        "moves money."
+    )
+    ov = ops_svc.overview(
+        OPS_ROOT,
+        PAPER_ROOT,
+        datetime.now(UTC),
+        ctx.ident.last_ts.tz_convert("America/New_York").date().isoformat(),
+    )
+    c = st.columns(6)
+    c[0].metric("Latest completed session", str(ov["latest_completed_session"]))
+    c[1].metric("Next session eligible", str(ov["next_session_eligible_at"])[:16] + " UTC")
+    c[2].metric("Latest ingested", str(ov["latest_ingested_session"]))
+    c[3].metric("Latest paper session", str(ov["latest_paper_session"]))
+    c[4].metric("Pipeline checkpoint", str(ov["checkpoint"]))
+    c[5].metric("Scheduler", str(ov["scheduler"]["status"]).split(" (")[0])
+    st.caption(
+        "Latest alert evaluation: "
+        f"{ov['latest_alert_evaluation'] or 'none recorded by the pipeline'}"
+        f" · grace after the official close: {ov['grace_minutes']} min · lock: "
+        + (
+            "free"
+            if not ov["lock"]
+            else f"held by {ov['lock'].get('host')}:{ov['lock'].get('pid')}"
+            f" since {ov['lock'].get('acquired_at')}"
+        )
+    )
+    b1, b2 = st.columns(2)
+    if b1.button("Dry run (shows the plan; changes nothing)", key="ops_dry"):
+        from app.operations.cli import build_pipeline
+        from app.operations.config import OperationsConfig
+
+        res = build_pipeline(OperationsConfig(), dry_run=True).run(mode="dry_run")
+        st.json(
+            {
+                "targets": res.target_sessions,
+                "precheck": res.precheck.status if res.precheck else None,
+                "plan": res.plan,
+            }
+        )
+    if b2.button(f"{OPS_LABEL}: run pending sessions now", key="ops_run"):
+        from app.operations.cli import build_pipeline
+        from app.operations.config import OperationsConfig
+
+        with st.spinner("Running the local pipeline..."):
+            res = build_pipeline(OperationsConfig()).run(mode="manual")
+        st.success(f"{OPS_LABEL}: {res.status}; sessions {res.target_sessions or 'none'}")
+        if res.errors:
+            st.error("; ".join(res.errors))
+    st.subheader("Last run")
+    last = ops_svc.last_run_detail(OPS_ROOT)
+    if last is None:
+        st.info(
+            "No pipeline run recorded yet. Use the buttons above or "
+            "`python -m app.operations.cli run`."
+        )
+    else:
+        st.write(
+            f"**{last['status']}** · {last.get('mode')} · {last['run_id']} · sessions "
+            f"{', '.join(last['sessions']) or 'none'}"
+        )
+        st.dataframe(ops_svc.stage_table(last), hide_index=True, width="stretch")
+    st.subheader("Recent runs")
+    st.dataframe(ops_svc.history_table(OPS_ROOT), hide_index=True, width="stretch")
+    with st.expander("Scheduler and operational metrics"):
+        st.json({"scheduler": ov["scheduler"], "metrics": ov["metrics"]})
+    st.caption(
+        "Operational metrics only (durations, counts, retries); not trading performance. "
+        "Start the scheduler with `python -m app.operations.cli scheduler`."
+    )
+
+
 PAGES = (
     ("Market Overview", market_overview),
     ("Technical Analysis", technical_analysis),
@@ -1074,5 +1159,6 @@ PAGES = (
     ("Risk Management", risk_management),
     ("Paper Trading", paper_trading),
     ("Alerts & Monitoring", alerts_monitoring),
+    ("Operations", operations),
     ("System / Data Health", system_health),
 )

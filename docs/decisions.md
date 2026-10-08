@@ -393,6 +393,35 @@ acceptance; they are superseded by a new ADR.
   of `refuse_real_money_order()` invocations would require changing the safety module and is
   left for an owner decision.
 
+## ADR-0024 — Daily operations: orchestration-only pipeline, file lock, local scheduler
+
+- **Status:** Accepted (2026-10-08, Phase 14.5)
+- **Decision:**
+  - `app/operations` orchestrates existing subsystems in a fixed order — PRECHECK, then per
+    completed XNYS session INGEST → VALIDATE → PAPER → ALERTS, then HEALTH → COMPLETE — through a
+    `Services` port (real adapter: ingestion, stored-bar checks, Phase 12 paper store, Phase 14
+    alert run, health). It contains no financial logic and adds no trading capability.
+  - Sessions are eligible after the official close (calendar, early closes included) + 30 min
+    grace; incomplete sessions are never processed; catch-up is session by session, oldest
+    first, at most 10 per run.
+  - Durability and recovery rely on the subsystems' idempotency; the operations checkpoint
+    (last completed session) only narrows the pending set. History is an append-only,
+    hash-chained `runs.jsonl` plus an atomic, read-modify-write `state.json` in git-ignored
+    `data/operations/`. No database migration.
+  - Single-run lock: atomic exclusive file with owner metadata; broken automatically only for a
+    verified-dead process on the same host; otherwise an explicit `unlock --force`.
+  - Failure policy: ingestion/validation/paper-stage failures stop later sessions; paper account
+    failures are isolated; alert and health failures never roll anything back; late data uses
+    bounded retries (3 attempts, at least 30 min apart) and is never fabricated.
+  - Scheduler: one long-running local process with injected clock/sleep, polling every 5 min and
+    running only when due. Rejected: installing OS scheduler entries from code, cron,
+    APScheduler, Celery/Redis, Windows services (more moving parts, harder to test, no benefit
+    for one daily job on one machine).
+  - Version 0.14.5: SemVer 0.x allows any change in any release; the number keeps phase and
+    version aligned, and broker integration remains Phase 15.
+- **Consequences:** Daily operation is one command or one long-running process; restarts and
+  duplicate wake-ups are safe. Running unattended still requires the user to start the scheduler.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

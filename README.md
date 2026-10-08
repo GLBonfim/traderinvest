@@ -27,6 +27,7 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 | 12 | Paper trading: local simulation, strategy → risk → paper broker, historical replay + incremental restart-safe accounts, hash-chained ledger | ✅ Done |
 | 13 | Research & paper-trading dashboard (Streamlit): market, candles, structure, indicators, regimes, strategies, backtests, validation, ML, risk, paper accounts, system health | ✅ Done |
 | 14 | Alerts & monitoring: deterministic transition rules, point-in-time IDs, hash-chained local store, console/dashboard/optional webhook delivery, health monitoring | ✅ Done |
+| 14.5 | Daily operations: XNYS-aware pipeline (ingest → validate → paper → alerts → health), single-run lock, crash-safe history, catch-up, local scheduler, dashboard page | ✅ Done |
 | 15 | broker | Not started |
 
 The platform can ingest and validate SPY daily bars and describe candle geometry and
@@ -75,6 +76,7 @@ app/
 ├── paper/      Paper trading (local simulation): RiskManager -> PaperBroker, replay, durable accounts
 ├── dashboard/  Streamlit research dashboard (services -> charts -> pages); daily research system
 ├── alerts/     Alerts & monitoring: rules over recorded events, local store, delivery channels
+├── operations/ Daily pipeline + local scheduler (orchestration only; paper simulation)
 └── database/   SQLAlchemy 2 models + session
 migrations/     Alembic migrations
 tests/          unit + integration (PostgreSQL) tests
@@ -228,6 +230,18 @@ uv run python -m app.alerts.cli status
 ```
 
 Event types, deduplication, delivery and retry rules: [docs/alerts.md](docs/alerts.md).
+
+Daily operations — PAPER SIMULATION / LOCAL OPERATIONS: one command processes every completed
+XNYS session not yet processed (ingest → validate → paper → alerts → health), or a local
+scheduler does it after each close (+30 min):
+
+```bash
+uv run python -m app.operations.cli run --dry-run   # show the plan, change nothing
+uv run python -m app.operations.cli run
+uv run python -m app.operations.cli scheduler       # long-running; Ctrl+C to stop
+```
+
+Stages, failure policy, locking, catch-up and recovery: [docs/operations.md](docs/operations.md).
 
 `/health` returns `200` with `"database": {"status": "ok"}` when PostgreSQL is reachable, and
 `503` with `"status": "degraded"` when it is not.
