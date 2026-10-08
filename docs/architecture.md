@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **Phase 13 — Research & Paper-Trading Dashboard**. This document describes what exists today and the intended
+Status: **Phase 14 — Alerts & Monitoring**. This document describes what exists today and the intended
 direction. Components for later phases are listed as *planned* and do not exist in code yet.
 
 ## Goals
@@ -60,6 +60,9 @@ A reproducible, testable, evidence-driven research platform that can:
 │                    Instruction -> PaperBroker (local         │                 │
 │                    simulation), replay + incremental store,  │                 │
 │                    hash-chained ledger (paper-trading.md)    │                 │
+│  app.alerts        deterministic alerts & monitoring:        │                 │
+│                    rules -> hash-chained store -> console /  │                 │
+│                    dashboard / optional webhook (alerts.md)  │                 │
 │  app.dashboard     Streamlit research dashboard: services    │                 │
 │                    (pure) -> charts -> pages; read-only,     │                 │
 │                    PAPER SIMULATION controls (dashboard.md)  │                 │
@@ -85,7 +88,9 @@ candles ← price_action, indicators ← regimes ← strategies ← backtest ←
 `plan_order`/`apply_order`), `strategies`, `indicators`, `data.calendar` and `core.safety`;
 nothing imports `app.paper`. It has no network or broker imports (AST-checked test).
 
-`app.dashboard` sits on top of everything and is imported by nothing; its `services` import no
+`app.alerts` reads engine outputs, paper ledgers (read-only) and database rows and imports no
+trading module; `app.dashboard` shows its store and health. `app.dashboard` sits on top of
+everything and is imported by nothing except `app.alerts.sources` (read-only market helpers); its `services` import no
 UI library, and the package imports no network, broker, data-provider or LLM module.
 
 ## Domain model: separating what is traded from where data comes from

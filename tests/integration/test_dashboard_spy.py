@@ -196,7 +196,7 @@ def test_every_page_renders(data) -> None:  # type: ignore[no-untyped-def]
 
     from app.dashboard.ui.pages import PAGES
 
-    assert len(PAGES) == 11
+    assert len(PAGES) == 12
     for title, f in PAGES:
         at = AppTest.from_function(_page_script, default_timeout=900)
         at.session_state["page"] = f.__name__

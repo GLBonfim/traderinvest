@@ -12,6 +12,7 @@ from app.backtest.engine import BENCHMARK_PRICE, BENCHMARK_TOTAL
 from app.core.config import get_settings
 from app.dashboard import charts
 from app.dashboard.config import DISCLAIMERS, PAPER_LABEL, PAPER_ROOT, RESEARCH_ROOT
+from app.dashboard.services import alerts as alerts_svc
 from app.dashboard.services import analysis, explain, health, market, paper, research
 from app.dashboard.ui.context import CONFIG_KEY, Context, cached_paper_inputs, cached_risk_table
 from app.database.session import get_engine, get_session_factory
@@ -936,6 +937,131 @@ def system_health(ctx: Context) -> None:
     )
 
 
+# ── 12. Alerts & Monitoring ──
+
+
+SEVERITY_ORDER = ("CRITICAL", "WARNING", "INFO")
+
+
+def alerts_monitoring(ctx: Context) -> None:
+    st.title("Alerts & Monitoring")
+    st.caption(
+        "Alerts report events the engines, the risk layer and the paper simulation already "
+        "recorded. They are not recommendations and never trigger any trading action. "
+        "Paper-related alerts are PAPER SIMULATION events."
+    )
+    with get_session_factory()() as s:
+        ing = market.latest_ingestion(s, ctx.ident.instrument_id)
+    fresh = market.freshness(ctx.ident.last_ts, datetime.now(UTC))
+    mon = alerts_svc.monitoring_state(
+        get_engine(), PAPER_ROOT, ident=ctx.ident, fresh=fresh, last_ingestion=ing
+    )
+    st.subheader("Monitoring")
+    st.dataframe(
+        pd.DataFrame([{"component": k, **v} for k, v in mon.items()]),
+        hide_index=True,
+        width="stretch",
+    )
+    alerts, metrics = alerts_svc.load_alerts()
+    if st.button("Evaluate alert rules now (writes to the local alert store only)", key="al_run"):
+        from app.alerts.engine import run_alerts
+        from app.alerts.sources import dashboard_results_missing, load_market
+
+        res = run_alerts(
+            settings=get_settings(),
+            load_market=load_market,
+            paper_root=PAPER_ROOT,
+            dashboard_results_missing=dashboard_results_missing,
+        )
+        st.success(
+            f"{len(res.new_alerts)} new alert(s); {res.candidates - len(res.new_alerts)} "
+            "already known (deduplicated)."
+        )
+        st.rerun()
+    if metrics is None:
+        st.info("No alert store yet. Run `python -m app.alerts.cli run` or the button above.")
+        return
+    c = st.columns(5)
+    c[0].metric("Alerts stored", metrics["alerts_stored"])
+    c[1].metric("Deduplicated", metrics["alerts_deduplicated"])
+    c[2].metric("Deliveries succeeded", metrics["deliveries_succeeded"])
+    c[3].metric("Delivery attempts failed", metrics["delivery_attempts_failed"])
+    c[4].metric("Failed permanently", metrics["deliveries_failed_permanently"])
+    st.caption(
+        "Operational counters of the alert subsystem; not performance metrics. By "
+        f"severity {metrics['by_severity']}; by source {metrics['by_source']}."
+    )
+    if alerts.empty:
+        st.info("No alerts stored.")
+        return
+    f = st.columns(5)
+    sev = f[0].multiselect(
+        "Severity", SEVERITY_ORDER, default=["CRITICAL", "WARNING"], key="al_sev"
+    )
+    src = f[1].multiselect("Source", sorted(alerts["source"].unique()), key="al_src")
+    strat = f[2].selectbox(
+        "Strategy", ["(all)", *sorted(alerts["strategy_id"].dropna().unique())], key="al_strat"
+    )
+    acct = f[3].selectbox(
+        "Account", ["(all)", *sorted(alerts["account_id"].dropna().unique())], key="al_acct"
+    )
+    days = pd.to_datetime(alerts["occurred_at"], utc=True)
+    rng = f[4].date_input(
+        "Date range", value=(days.min().date(), days.max().date()), key="al_range"
+    )
+    start, end = rng if isinstance(rng, tuple) and len(rng) == 2 else (None, None)
+    view = alerts_svc.filter_alerts(
+        alerts,
+        severities=sev,
+        sources=src,
+        strategy=None if strat == "(all)" else str(strat),
+        account=None if acct == "(all)" else str(acct),
+        start=start,
+        end=end,
+    )
+    st.caption(
+        f"{len(view)} of {len(alerts)} alerts (newest first). Defaults show CRITICAL and "
+        "WARNING only to keep the view quiet."
+    )
+    st.dataframe(
+        view[[*alerts_svc.ALERT_COLUMNS[:8], "delivery"]], hide_index=True, width="stretch"
+    )
+    if len(view):
+        chosen = str(
+            st.selectbox(
+                "Alert detail",
+                view["alert_id"],
+                format_func=lambda i: (
+                    f"{i} · " + str(view.loc[view["alert_id"] == i, "title"].iloc[0])
+                ),
+                key="al_detail",
+            )
+        )
+        d = alerts_svc.alert_detail(view, str(chosen))
+        st.markdown(f"**{d['event_type']}** · {d['severity']} · source {d['source']}")
+        st.write(d["message"])
+        st.json(
+            {
+                k: d[k]
+                for k in (
+                    "occurred_at",
+                    "session",
+                    "instrument",
+                    "strategy_id",
+                    "account_id",
+                    "dedup_key",
+                    "alert_id",
+                    "recorded_at",
+                    "delivery",
+                    "rule_version",
+                    "app_version",
+                )
+            }
+        )
+        st.markdown("**Structured reason (recorded values)**")
+        st.json(d["payload"])
+
+
 PAGES = (
     ("Market Overview", market_overview),
     ("Technical Analysis", technical_analysis),
@@ -947,5 +1073,6 @@ PAGES = (
     ("Machine Learning", machine_learning),
     ("Risk Management", risk_management),
     ("Paper Trading", paper_trading),
+    ("Alerts & Monitoring", alerts_monitoring),
     ("System / Data Health", system_health),
 )

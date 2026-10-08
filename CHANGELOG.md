@@ -5,6 +5,26 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-10-08 — Phase 14: Alerts & Monitoring
+
+### Added
+- `app/alerts`: deterministic, downstream-only alerting — 33 event types over data (stale,
+  missing session, ingestion failure, provider failure, quality events), market regimes,
+  strategy-state transitions, risk interventions (reduced, blocked, drawdown warning, lock
+  cooldown start/end, stop), paper simulation events (entry/exit/rebalance scheduled, fill,
+  rejected order, account/state/ledger errors), system and safety invariants; INFO / WARNING /
+  CRITICAL; transition and episode semantics (no alert storms); point-in-time `alert_id`.
+- Hash-chained local store `data/alerts/` (alerts, deliveries, versioned state), console and
+  dashboard channels, optional generic webhook (`ALERT_WEBHOOK_URL`) with bounded,
+  non-blocking retries; lightweight monitoring (database, freshness, ingestion, paper ledgers,
+  alert store, safety, version) and operational counters; CLI `python -m app.alerts.cli`
+  (`run`, `list`, `status`, `verify`, `test-channel`).
+- Dashboard page "Alerts & Monitoring" (filters, detail with structured payload, delivery
+  status, health).
+- 34 alert unit tests and 4 SPY integration tests (bar → engines → strategy → risk → paper →
+  alert, timing checked against the ledger and engines).
+- `docs/alerts.md`, ADR-0023; `.env.example` documents the optional webhook variables.
+
 ## [0.13.0] — 2026-10-07 — Phase 13: Research & Paper-Trading Dashboard
 
 ### Added

@@ -369,6 +369,30 @@ acceptance; they are superseded by a new ADR.
 - **Consequences:** The UI can be replaced later (e.g. a web front-end) by reusing the services.
   Streamlit reruns make full-history charts take seconds; acceptable for daily research use.
 
+## ADR-0023 — Alerts: downstream-only, transition rules, point-in-time IDs, file store
+
+- **Status:** Accepted (2026-10-08, Phase 14)
+- **Decision:**
+  - Alerts are downstream consumers of recorded domain outputs (engines, risk decisions, paper
+    ledgers, ingestion runs, data-quality events): domain event → rule → alert → channel. They
+    never create decisions, instructions or orders; `app/alerts` imports no trading module.
+  - Explicit deterministic rules that fire on transitions (wall-clock conditions as episodes);
+    three severities (INFO, WARNING, CRITICAL) describing operational attention only; fixed
+    message templates; no LLM.
+  - Identity: `alert_id = sha256(event_type | instrument | strategy/account | session or
+    episode | state)[:16]` — no dataset fingerprint, version or run time (Phase 12 discipline).
+  - Persistence: git-ignored `data/alerts/` with hash-chained append-only `alerts.jsonl` and
+    `deliveries.jsonl` plus an atomic, versioned `state.json`; no database migration (alerts
+    are append-only, local and never queried relationally).
+  - Channels: console and dashboard always; one optional generic JSON webhook configured only
+    through `ALERT_WEBHOOK_URL` (no vendor SDKs). Bounded retries (3 attempts, 60 s / 300 s
+    backoff, permanent failure), non-blocking, failures recorded and isolated, URL never logged.
+  - Reporting starts at a store-level `since` (default: latest stored session).
+- **Consequences:** Re-processing, refreshes and restarts never duplicate alerts or deliveries
+  (external delivery is at-least-once only across a crash between send and record). Monitoring
+  of `refuse_real_money_order()` invocations would require changing the safety module and is
+  left for an owner decision.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

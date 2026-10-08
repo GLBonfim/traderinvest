@@ -54,6 +54,7 @@ one (integration tests compare the dashboard with each engine on the full SPY hi
 | Machine Learning | verdict, models, feature count, target, split, classification metrics, AUC intervals, edge rule, predicted-probability distribution, calibration (reliability) on TEST | Phase 10 (persisted) |
 | Risk Management | Strategy request → RiskManager → approved exposure for the selected strategy/scenario/session: sizing method, volatility target, ATR budget, drawdown, lock/stop status, reasons; requested vs approved history; all six scenarios for the strategy | Phase 11 |
 | Paper Trading | account (cash, market value, equity, realized/unrealized/total P&L, costs, exposure), position (quantity, average cost incl. costs, mark, value), current state (strategy state, requested/approved exposure, pending entry/exit/rebalance, next effective session), recent ledger (decisions, orders, fills, reconciliation, snapshots) | Phase 12 |
+| Alerts & Monitoring | monitoring table (database, data freshness, ingestion, paper ledgers, alert store, version), alert counters, filters (severity, source, strategy, account, date range), alert table with delivery status, alert detail with the structured payload; explicit "evaluate now" button (writes to the alert store only) | Phase 14 (docs/alerts.md) |
 | System / Data Health | database, schema revision vs head, app version, git commit, dataset range, bars, data-quality events, paper accounts with ledger verification, safety mode | — |
 
 The sidebar selects the **session** (as of its close; a non-session date shows the latest
