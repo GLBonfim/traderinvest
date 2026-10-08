@@ -25,7 +25,8 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 | 10 | Machine learning research: logistic regression & random forest, chronological split, pre-declared edge rule — **NO INCREMENTAL EDGE FOUND** | ✅ Done |
 | 11 | Risk management: sizing, limits, drawdown/session locks, close-based stops, overlay vs control | ✅ Done |
 | 12 | Paper trading: local simulation, strategy → risk → paper broker, historical replay + incremental restart-safe accounts, hash-chained ledger | ✅ Done |
-| 13–15 | dashboard, alerts, broker | Not started |
+| 13 | Research & paper-trading dashboard (Streamlit): market, candles, structure, indicators, regimes, strategies, backtests, validation, ML, risk, paper accounts, system health | ✅ Done |
+| 14–15 | alerts, broker | Not started |
 
 The platform can ingest and validate SPY daily bars and describe candle geometry and
 candlestick patterns, describe market structure and price-action events, and compute technical
@@ -71,6 +72,7 @@ app/
 ├── ml/         Point-in-time features, chronological split, LR/RF, Phase 8/9 evaluation
 ├── risk/       Risk overlay: sizing, limits, drawdown/session locks, stops, diagnostics
 ├── paper/      Paper trading (local simulation): RiskManager -> PaperBroker, replay, durable accounts
+├── dashboard/  Streamlit research dashboard (services -> charts -> pages); daily research system
 └── database/   SQLAlchemy 2 models + session
 migrations/     Alembic migrations
 tests/          unit + integration (PostgreSQL) tests
@@ -203,6 +205,15 @@ uv run python -m app.paper.cli status --symbol SPY --strategy sma_trend
 ```
 
 Lifecycle, accounting, ledger and restart guarantees: [docs/paper-trading.md](docs/paper-trading.md).
+
+Research & paper-trading dashboard — a daily research system, not a live-trading terminal
+(needs the local PostgreSQL with ingested bars; serves on http://127.0.0.1:8501 only):
+
+```bash
+uv run streamlit run app/dashboard/streamlit_app.py
+```
+
+Sections, caching, paper controls and safety restrictions: [docs/dashboard.md](docs/dashboard.md).
 
 `/health` returns `200` with `"database": {"status": "ok"}` when PostgreSQL is reachable, and
 `503` with `"status": "degraded"` when it is not.

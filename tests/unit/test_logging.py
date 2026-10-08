@@ -36,6 +36,16 @@ def test_sensitive_fields_are_redacted(capsys: pytest.CaptureFixture[str]) -> No
     assert '"p"' not in out
 
 
+def test_uvicorn_loggers_disabled_by_a_prior_config_are_re_enabled(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # e.g. Streamlit/uvicorn created the logger, then Alembic's fileConfig disabled it
+    logging.getLogger("uvicorn.error").disabled = True
+    configure_logging("INFO", "json")
+    logging.getLogger("uvicorn.error").warning("after reconfiguration")
+    assert _last_json_line(capsys.readouterr().out)["event"] == "after reconfiguration"
+
+
 def test_stdlib_loggers_share_the_json_pipeline(capsys: pytest.CaptureFixture[str]) -> None:
     configure_logging("INFO", "json")
     logging.getLogger("uvicorn.error").warning("from stdlib")

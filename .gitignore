@@ -58,3 +58,6 @@ desktop.ini
 
 # ── Local tool state ────────────────────────────────────
 .claude/
+
+# Streamlit local secrets (never committed)
+.streamlit/secrets.toml

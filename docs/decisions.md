@@ -344,6 +344,31 @@ acceptance; they are superseded by a new ADR.
   crash between ledger and state). Paper equals Phase 8/11 within 1e-6 currency (not bit-exact).
   Concurrency (several writers per account) and a real broker remain out of scope.
 
+## ADR-0022 — Research dashboard: Streamlit over pure services, read-only by default
+
+- **Status:** Accepted (2026-10-07, Phase 13)
+- **Decision:**
+  - Streamlit + Plotly for the first dashboard (no React/Next.js yet). Three layers: domain
+    engines → `app/dashboard/services` (pure, deterministic, no Streamlit/Plotly) → thin pages.
+    No financial calculation lives in the UI; integration tests compare every displayed number
+    with its engine on the full SPY history.
+  - The dashboard is a *daily research system*: it reads the local database and local files,
+    never fetches market data, binds to 127.0.0.1, disables usage statistics, and checks the
+    trading mode at start-up. No LLM is used; the session summary is template-based and lists
+    its source fields.
+  - Historical views are point-in-time (pivots after `confirmed_at`, events after
+    `available_at`, zones from the session's state).
+  - Caching keyed by dataset identity (app version, bars, first/last bar, last ingestion) and a
+    configuration key (all engine/backtest/validation/ML/risk fingerprints). Paper accounts are
+    never cached. Phase 9/10 results are persisted under `data/dashboard/research/` and recomputed
+    only by an explicit, labelled action (never on page load; models are never retrained
+    automatically).
+  - The only mutating controls are two PAPER SIMULATION actions delegated to `app.paper`
+    (create account, process available sessions). No broker, credentials, order endpoint or
+    live mode; `TradingMode` stays {disabled, paper}.
+- **Consequences:** The UI can be replaced later (e.g. a web front-end) by reusing the services.
+  Streamlit reruns make full-history charts take seconds; acceptable for daily research use.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

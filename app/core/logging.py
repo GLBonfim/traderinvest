@@ -70,6 +70,8 @@ def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
         lg = logging.getLogger(name)
         lg.handlers.clear()
         lg.propagate = True
+        # a prior logging.config call (e.g. Alembic's fileConfig) disables existing loggers
+        lg.disabled = False
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:

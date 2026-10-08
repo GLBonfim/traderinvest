@@ -1,0 +1,18 @@
+# Dashboard server settings (local research use only).
+[server]
+address = "127.0.0.1"   # bind to localhost only; never exposed to the network
+headless = true
+
+[browser]
+gatherUsageStats = false  # no telemetry: the dashboard makes no outbound network calls
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#2f5d8a"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f3f4f6"
+textColor = "#1f2937"
+font = "sans serif"

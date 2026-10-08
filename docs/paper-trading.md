@@ -120,6 +120,9 @@ Round trips (flat → flat) are reported with the Phase 8 trade formulas: gross 
 notional − Σ buy notional, costs = Σ buy costs + Σ sell costs, net = gross − costs, net return =
 net / (Σ buy notional + Σ buy costs).
 
+**Execution-simulation safeguard (project convention, ADR-0021; approved at the Phase 12 gate).**
+This is a property of the paper broker only — **not a change to the research backtester**:
+Phase 8/11 behaviour and results are frozen and keep their original arithmetic.
 **Only deviation from Phase 8/11 arithmetic.** `buy_notional` solves N + costs(N) = cash in
 floating point and can leave cash at ≈ −1.5e-11 (exposure 1 + 2e-16). The paper broker never
 books negative cash: it lowers such a buy's notional by a few ulps (at most `cash_tolerance` =

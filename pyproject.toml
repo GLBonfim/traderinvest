@@ -1,6 +1,6 @@
 [project]
 name = "quant-platform"
-version = "0.12.0"
+version = "0.13.0"
 description = "Market analysis & algorithmic trading research platform (research-only; no real-money execution)."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -9,11 +9,13 @@ dependencies = [
     "exchange-calendars>=4.13.2",
     "fastapi>=0.115",
     "pandas>=3.0.6",
+    "plotly>=6.0",
     "psycopg[binary]>=3.2",
     "pydantic>=2.8",
     "pydantic-settings>=2.4",
     "scikit-learn>=1.9.1",
     "sqlalchemy>=2.0.30",
+    "streamlit>=1.50",
     "structlog>=24.4",
     "uvicorn[standard]>=0.30",
     "yfinance>=1.7.0",
@@ -64,5 +66,5 @@ plugins = ["pydantic.mypy"]
 files = ["app"]
 
 [[tool.mypy.overrides]]
-module = ["yfinance", "yfinance.*", "exchange_calendars", "exchange_calendars.*", "sklearn", "sklearn.*"]
+module = ["yfinance", "yfinance.*", "exchange_calendars", "exchange_calendars.*", "sklearn", "sklearn.*", "plotly", "plotly.*"]
 ignore_missing_imports = true

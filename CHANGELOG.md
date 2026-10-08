@@ -5,6 +5,38 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-10-07 — Phase 13: Research & Paper-Trading Dashboard
+
+### Added
+- `app/dashboard`: Streamlit dashboard (daily research system; not a live-trading terminal) with
+  11 sections — Market Overview, Technical Analysis, Market Structure, Market Regime, Strategy
+  Research, Backtesting, Statistical Validation, Machine Learning, Risk Management, Paper
+  Trading, System / Data Health — over pure services (`market`, `analysis`, `research`, `paper`,
+  `explain`, `health`) and Plotly chart builders.
+- Point-in-time historical views (confirmation latency respected), stale-data detection from the
+  XNYS calendar, deterministic template-based session summary with source fields (no LLM).
+- Caching keyed by dataset identity + configuration fingerprints; paper accounts never cached;
+  Phase 9/10 results persisted in git-ignored `data/dashboard/research/` and recomputed only by
+  explicit, labelled actions.
+- Paper controls (PAPER SIMULATION only): create a local account, process available sessions.
+- `.streamlit/config.toml`: localhost-only server, usage statistics disabled.
+- Dependencies: streamlit, plotly.
+- 31 dashboard unit tests (mapping, freshness, point-in-time views, explanations, persistence,
+  paper service, safety boundary) and 10 SPY integration tests (dashboard vs Phases 2–12 engines,
+  every page renders, no secret displayed).
+- `docs/dashboard.md`, ADR-0022.
+
+### Fixed
+- `app.core.logging.configure_logging` now re-enables the uvicorn loggers: if they existed
+  (Streamlit runs on uvicorn) when a `logging.config` call disabled existing loggers (Alembic's
+  `fileConfig` in `migrations/env.py`), their records were silently dropped. Found by the full
+  suite after adding the Streamlit page tests; regression test added. No other Phase 1–12 code
+  changed.
+
+### Changed
+- `docs/paper-trading.md`: the paper broker's negative-cash safeguard is documented as an
+  execution-simulation convention, not a change to the research backtester (Phase 8/11 frozen).
+
 ## [0.12.0] — 2026-10-07 — Phase 12: Paper Trading
 
 Completes the Phase 12 WIP (`94480d0`) in a follow-up commit. Paper trading is a local

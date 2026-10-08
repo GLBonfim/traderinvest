@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **Phase 12 — Paper Trading**. This document describes what exists today and the intended
+Status: **Phase 13 — Research & Paper-Trading Dashboard**. This document describes what exists today and the intended
 direction. Components for later phases are listed as *planned* and do not exist in code yet.
 
 ## Goals
@@ -60,6 +60,9 @@ A reproducible, testable, evidence-driven research platform that can:
 │                    Instruction -> PaperBroker (local         │                 │
 │                    simulation), replay + incremental store,  │                 │
 │                    hash-chained ledger (paper-trading.md)    │                 │
+│  app.dashboard     Streamlit research dashboard: services    │                 │
+│                    (pure) -> charts -> pages; read-only,     │                 │
+│                    PAPER SIMULATION controls (dashboard.md)  │                 │
 │  migrations/       Alembic (URL from env, never from .ini)   │                 │
 └──────────────────────────────────────────────────────────────┼─────────────────┘
                                                                │ 127.0.0.1:5432
@@ -81,6 +84,9 @@ candles ← price_action, indicators ← regimes ← strategies ← backtest ←
 `app.paper` depends on `backtest` (costs, metrics, session timing), `risk` (RiskManager,
 `plan_order`/`apply_order`), `strategies`, `indicators`, `data.calendar` and `core.safety`;
 nothing imports `app.paper`. It has no network or broker imports (AST-checked test).
+
+`app.dashboard` sits on top of everything and is imported by nothing; its `services` import no
+UI library, and the package imports no network, broker, data-provider or LLM module.
 
 ## Domain model: separating what is traded from where data comes from
 
@@ -157,7 +163,7 @@ app/
 ├── features/
 ├── signals/       SignalEngine, DecisionEngine
 ├── execution/     Broker interface (paper broker exists in app/paper; no real broker)
-└── dashboard/     Streamlit
+└── dashboard/     Streamlit (exists: app/dashboard, Phase 13)
 ```
 
 ## Known limitations
