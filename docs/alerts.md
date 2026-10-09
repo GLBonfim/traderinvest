@@ -45,6 +45,8 @@ Severity describes operational attention only — never a financial opportunity.
 | `OPS_STAGE_FAILED`, `OPS_SESSION_DATA_MISSING`, `OPS_LOCK_CONFLICT` | WARNING | Operations | a pipeline stage failed for a session (key: stage, session, account); the expected bar is still missing after the bounded retries; another instance holds the pipeline lock (Phase 14.5, docs/operations.md) |
 | `OPS_CATCH_UP_REQUIRED` | INFO | Operations | more pending sessions than one run processes |
 | `OPS_REPEATED_FAILURE` | CRITICAL | Operations | the configured number of consecutive failed runs (once per streak) |
+| `BROKER_ORDER_SUBMITTED` | INFO | BrokerSandbox | a sandbox (Alpaca paper) order was submitted for a risk-approved decision (Phase 15) |
+| `BROKER_ORDER_BLOCKED`, `BROKER_ORDER_FAILED`, `BROKER_RECONCILIATION_MISMATCH`, `BROKER_KILL_SWITCH_ENGAGED` | WARNING | BrokerSandbox | a gate blocked an order (not the default unarmed state); the sandbox rejected an order; sandbox position differs from the local simulation; kill switch engaged |
 | `TEST_NOTIFICATION` | INFO | System | only from `alerts test-channel` (never a market/trading event) |
 
 Every message is a fixed template filled with recorded values; the structured reason is in

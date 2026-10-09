@@ -5,6 +5,35 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-10-09 — Phase 15: Broker Sandbox Integration
+
+Alpaca PAPER account only — no real money. No external sandbox order has been placed.
+
+### Added
+- `app/broker`: `BrokerGateway` abstraction; `AlpacaPaperGateway` (official REST API, stdlib
+  HTTP, fixed `https://paper-api.alpaca.markets`, `https://api.alpaca.markets` explicitly
+  rejected, no endpoint parameter/setting, redirects never followed, environment-only paper
+  credentials never logged or stored).
+- `SandboxExecutor`: mirrors RiskManager-approved decisions of linked paper accounts (no
+  manual-order surface); gates (kill switch, armed, `TRADING_MODE=paper`, credentials, symbol,
+  short, notional and daily caps, staleness); whole-share opening-auction orders by default;
+  deterministic `client_order_id`, write-ahead hash-chained log, lookup before POST and on
+  restart; reconciliation against the local simulation; kill switch.
+- CLI `python -m app.broker.cli` (`status`, `link`/`unlink`, `sync` [dry run by default],
+  `reconcile`, `arm`/`disarm`, `kill`/`release-kill`, `verify`); dashboard page "Broker
+  Sandbox"; alert types `BROKER_ORDER_SUBMITTED`, `BROKER_ORDER_BLOCKED`, `BROKER_ORDER_FAILED`,
+  `BROKER_RECONCILIATION_MISMATCH`, `BROKER_KILL_SWITCH_ENGAGED`.
+- 32 broker unit tests (endpoint rejection incl. look-alikes, credential secrecy, adapter
+  mapping with a fake transport, every gate, crash before/after POST, caps, exit sizing,
+  policies, reconciliation, safety boundary) and 1 SPY integration test with a fake gateway.
+- `docs/broker-sandbox.md`, ADR-0025; `.env.example` lists the paper key variable names.
+
+### Changed
+- Integration tests pinned to their reference history (bars through 2026-10-06): the Phase 6/7
+  snapshot tests (exactly 8,479 bars) skipped, and the Phase 14.5 operations scenario failed,
+  once real daily operations ingested 2026-10-07/08. Test-only change; engines are causal, so
+  the pinned prefix is unaffected.
+
 ## [0.14.5] — 2026-10-08 — Phase 14.5: Daily Operations & Scheduler
 
 Intermediate phase (SemVer 0.x); broker integration remains Phase 15.

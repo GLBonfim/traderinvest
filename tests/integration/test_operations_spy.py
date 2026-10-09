@@ -56,8 +56,13 @@ def dev_bars() -> pd.DataFrame:
             _, bars = load_backtest_bars(s, "SPY")
     except (OperationalError, LookupError) as exc:
         pytest.skip(f"SPY data unavailable: {type(exc).__name__}")
-    if len(bars) < 8000 or bars.index[-1].date() < T:
-        pytest.skip("full SPY history through 2026-10-06 required")
+    # explicit reference cutoff T = 2026-10-06 (session date): later sessions ingested by real
+    # daily operations must not change this deterministic scenario
+    days = pd.DatetimeIndex(bars.index).tz_convert("America/New_York").date
+    bars = bars[days <= T]
+    days = pd.DatetimeIndex(bars.index).tz_convert("America/New_York").date
+    assert bars.index.is_monotonic_increasing and bars.index.is_unique
+    assert days[-1] == T and (days <= T).all() and len(bars) == 8479, (days[-1], len(bars))
     return bars
 
 

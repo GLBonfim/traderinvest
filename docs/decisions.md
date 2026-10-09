@@ -422,6 +422,28 @@ acceptance; they are superseded by a new ADR.
 - **Consequences:** Daily operation is one command or one long-running process; restarts and
   duplicate wake-ups are safe. Running unattended still requires the user to start the scheduler.
 
+## ADR-0025 — Broker sandbox: Alpaca paper only, fixed endpoint, mirror of approved decisions
+
+- **Status:** Accepted (2026-10-09, Phase 15)
+- **Decision:**
+  - Vendor: Alpaca, PAPER Trading API only, through its official REST API with the standard
+    library (no vendor SDK), behind the project's `BrokerGateway` abstraction.
+  - Endpoint: the constant `https://paper-api.alpaca.markets`. No parameter, setting or
+    environment variable selects an endpoint; `https://api.alpaca.markets` is rejected
+    explicitly, every other host/scheme/port is refused, redirects are never followed. No live
+    credentials, no live-mode documentation, no switching mechanism.
+  - Orders are derived only from RiskManager-approved decisions of linked local paper accounts
+    (no manual-order surface); the local PaperBroker remains the execution simulation.
+  - Default state: unarmed, nothing linked, no credentials; submission additionally requires
+    `TRADING_MODE=paper` and a released kill switch; caps on notional and daily orders.
+  - Idempotency: deterministic client_order_id, write-ahead log, lookup before every POST and
+    after ambiguous failures; hash-chained `data/broker/orders.jsonl`.
+  - Default order policy: market `opg` whole shares (opening auction ≈ next-session-open
+    convention); fractional `day` orders available but not default.
+- **Consequences:** No external order has been placed; the first sandbox order needs explicit
+  owner approval. Sandbox fills will differ from the local simulation (auction price, whole
+  shares, vendor-simulated partial fills); reconciliation reports differences without acting.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

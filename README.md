@@ -28,7 +28,7 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 | 13 | Research & paper-trading dashboard (Streamlit): market, candles, structure, indicators, regimes, strategies, backtests, validation, ML, risk, paper accounts, system health | ✅ Done |
 | 14 | Alerts & monitoring: deterministic transition rules, point-in-time IDs, hash-chained local store, console/dashboard/optional webhook delivery, health monitoring | ✅ Done |
 | 14.5 | Daily operations: XNYS-aware pipeline (ingest → validate → paper → alerts → health), single-run lock, crash-safe history, catch-up, local scheduler, dashboard page | ✅ Done |
-| 15 | broker | Not started |
+| 15 | Broker sandbox: Alpaca PAPER account only (fixed endpoint, production rejected), mirror of RiskManager-approved paper decisions, unarmed by default, kill switch, reconciliation | ✅ Done (no external order placed yet) |
 
 The platform can ingest and validate SPY daily bars and describe candle geometry and
 candlestick patterns, describe market structure and price-action events, and compute technical
@@ -77,6 +77,7 @@ app/
 ├── dashboard/  Streamlit research dashboard (services -> charts -> pages); daily research system
 ├── alerts/     Alerts & monitoring: rules over recorded events, local store, delivery channels
 ├── operations/ Daily pipeline + local scheduler (orchestration only; paper simulation)
+├── broker/     Broker SANDBOX (Alpaca paper only) mirror of approved paper decisions
 └── database/   SQLAlchemy 2 models + session
 migrations/     Alembic migrations
 tests/          unit + integration (PostgreSQL) tests
@@ -242,6 +243,17 @@ uv run python -m app.operations.cli scheduler       # long-running; Ctrl+C to st
 ```
 
 Stages, failure policy, locking, catch-up and recovery: [docs/operations.md](docs/operations.md).
+
+Broker sandbox — Alpaca PAPER account only (`https://paper-api.alpaca.markets`; production endpoints are
+rejected; no real money). Unarmed by default; orders come only from RiskManager-approved paper
+decisions of linked accounts:
+
+```bash
+uv run python -m app.broker.cli status
+uv run python -m app.broker.cli sync        # dry run: shows what would be sent
+```
+
+Gates, idempotency, reconciliation and kill switch: [docs/broker-sandbox.md](docs/broker-sandbox.md).
 
 `/health` returns `200` with `"database": {"status": "ok"}` when PostgreSQL is reachable, and
 `503` with `"status": "degraded"` when it is not.

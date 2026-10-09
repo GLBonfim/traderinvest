@@ -26,6 +26,7 @@ SRC_PAPER = "PaperTrading"
 SRC_SYSTEM = "System"
 SRC_SAFETY = "Safety"
 SRC_OPS = "Operations"
+SRC_BROKER = "BrokerSandbox"
 
 # event_type -> (severity, source). Severity describes operational attention, never a
 # financial opportunity.
@@ -74,6 +75,12 @@ EVENT_TYPES: dict[str, tuple[str, str]] = {
     "OPS_CATCH_UP_REQUIRED": (INFO, SRC_OPS),
     "OPS_LOCK_CONFLICT": (WARNING, SRC_OPS),
     "OPS_REPEATED_FAILURE": (CRITICAL, SRC_OPS),
+    # broker sandbox (Phase 15): Alpaca PAPER account only, no real money
+    "BROKER_ORDER_SUBMITTED": (INFO, SRC_BROKER),
+    "BROKER_ORDER_BLOCKED": (WARNING, SRC_BROKER),
+    "BROKER_ORDER_FAILED": (WARNING, SRC_BROKER),
+    "BROKER_RECONCILIATION_MISMATCH": (WARNING, SRC_BROKER),
+    "BROKER_KILL_SWITCH_ENGAGED": (WARNING, SRC_BROKER),
     # channel self-test (never a market or trading event)
     "TEST_NOTIFICATION": (INFO, SRC_SYSTEM),
 }

@@ -14,6 +14,7 @@ from app.dashboard import charts
 from app.dashboard.config import DISCLAIMERS, PAPER_LABEL, PAPER_ROOT, RESEARCH_ROOT
 from app.dashboard.services import alerts as alerts_svc
 from app.dashboard.services import analysis, explain, health, market, paper, research
+from app.dashboard.services import broker as broker_svc
 from app.dashboard.services import operations as ops_svc
 from app.dashboard.ui.context import CONFIG_KEY, Context, cached_paper_inputs, cached_risk_table
 from app.database.session import get_engine, get_session_factory
@@ -1147,6 +1148,64 @@ def operations(ctx: Context) -> None:
     )
 
 
+# ── 14. Broker Sandbox ──
+
+SANDBOX_LABEL = "BROKER SANDBOX — Alpaca paper account, no real money"
+
+
+def broker_sandbox(ctx: Context) -> None:
+    from app.broker.config import BROKER_ROOT
+    from app.operations.config import ALERTS_ROOT
+
+    st.title("Broker Sandbox")
+    st.warning(
+        f"**{SANDBOX_LABEL}.** Only https://paper-api.alpaca.markets is ever used; production "
+        "endpoints are rejected. Orders are derived only from RiskManager-approved paper "
+        "decisions of linked accounts and are sent only by `python -m app.broker.cli sync "
+        "--submit` when armed. This page cannot place, arm or release anything."
+    )
+    ov = broker_svc.overview(BROKER_ROOT)
+    c = st.columns(5)
+    c[0].metric("Armed", "yes" if ov["armed"] else "no")
+    c[1].metric("Kill switch", "ENGAGED" if ov["kill_switch"]["engaged"] else "released")
+    c[2].metric("Trading mode", str(ov["trading_mode"]))
+    c[3].metric("Sandbox credentials", "present" if ov["credentials_present"] else "not set")
+    c[4].metric("Linked paper accounts", len(ov["linked_accounts"]))
+    st.caption(
+        f"Endpoint `{ov['endpoint']}` · policy `{ov['order_policy']}` · limits "
+        f"{ov['limits']} · counters {ov['counters']}"
+    )
+    if st.button("Engage kill switch (blocks every sandbox order)", key="bk_kill"):
+        broker_svc.engage_kill_switch(BROKER_ROOT, ALERTS_ROOT, "dashboard")
+        st.rerun()
+    st.subheader("Dry-run preview (sends nothing)")
+    items = broker_svc.preview(BROKER_ROOT, PAPER_ROOT)
+    if items:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "account": i["account_id"],
+                        "outcome": i["outcome"],
+                        "detail": i["detail"],
+                        "order": i["order"],
+                    }
+                    for i in items
+                ]
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+    else:
+        st.info("No linked paper account. Link one with `python -m app.broker.cli link <id>`.")
+    st.subheader("Recorded sandbox orders")
+    orders = broker_svc.orders_table(BROKER_ROOT)
+    if orders.empty:
+        st.write("No sandbox order has been recorded.")
+    else:
+        st.dataframe(orders, hide_index=True, width="stretch")
+
+
 PAGES = (
     ("Market Overview", market_overview),
     ("Technical Analysis", technical_analysis),
@@ -1160,5 +1219,6 @@ PAGES = (
     ("Paper Trading", paper_trading),
     ("Alerts & Monitoring", alerts_monitoring),
     ("Operations", operations),
+    ("Broker Sandbox", broker_sandbox),
     ("System / Data Health", system_health),
 )

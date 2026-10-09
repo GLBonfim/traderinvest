@@ -5,6 +5,7 @@ descriptive and were not used to choose any threshold.
 """
 
 from collections.abc import Iterator
+from datetime import date
 
 import pandas as pd
 import pytest
@@ -30,17 +31,35 @@ EXPECTED_COUNTS = {
 }  # fmt: skip
 
 
+# Fixed historical regression fixture: SPY sessions 1993-01-29 .. 2026-10-06 (8,479).
+# Daily operations keep extending the development database; the snapshot never moves.
+REFERENCE_SESSION = date(2026, 10, 6)
+REFERENCE_SESSIONS = 8479
+
+
+def assert_reference_fixture(bars: pd.DataFrame) -> None:
+    """The fixed historical fixture: explicit session cutoff, fails visibly if it changes."""
+    sessions = pd.DatetimeIndex(bars.index).tz_convert("America/New_York").date
+    assert bars.index.is_monotonic_increasing and bars.index.is_unique
+    assert sessions[-1] == REFERENCE_SESSION, f"fixture ends on {sessions[-1]}"
+    assert (sessions <= REFERENCE_SESSION).all()
+    assert len(bars) == REFERENCE_SESSIONS, f"fixture has {len(bars)} sessions"
+
+
 @pytest.fixture(scope="module")
 def spy() -> Iterator[tuple[int, pd.DataFrame]]:
     try:
         engine = create_engine(Settings().database_url(), connect_args={"connect_timeout": 3})  # type: ignore[call-arg]
         with Session(engine) as session:
-            loaded = load_closed_bars(session, "SPY")
+            instrument_id, all_bars = load_closed_bars(session, "SPY")
     except (OperationalError, LookupError) as exc:
         pytest.skip(f"SPY data unavailable: {type(exc).__name__}")
-    if len(loaded[1]) != 8479:
-        pytest.skip("snapshot recorded on the 8,479-bar SPY history")
-    yield loaded
+    # select by session date (not row count); the engines are causal, so later sessions in the
+    # database cannot affect results on this prefix
+    days = pd.DatetimeIndex(all_bars.index).tz_convert("America/New_York").date
+    bars = all_bars[days <= REFERENCE_SESSION]
+    assert_reference_fixture(bars)
+    yield instrument_id, bars
     engine.dispose()
 
 

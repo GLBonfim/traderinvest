@@ -387,6 +387,7 @@ def test_catalog_severities_are_the_three_levels() -> None:
                 "SAFETY_",
                 "TEST_",
                 "OPS_",
+                "BROKER_",
             )
         )
         for t in EVENT_TYPES
