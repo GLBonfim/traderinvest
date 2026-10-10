@@ -17,9 +17,16 @@ from app.backtest.config import BacktestConfig
 from app.backtest.engine import session_times
 from app.broker import alpaca as alpaca_mod
 from app.broker.alpaca import AlpacaPaperGateway, _NoRedirect
-from app.broker.config import DAY_FRACTIONAL, SANDBOX_BASE_URL, BrokerConfig
+from app.broker.config import (
+    CAPITAL_REFERENCE_PRICE_UNGUARANTEED,
+    DAY_FRACTIONAL,
+    OPG_WHOLE_SHARES,
+    SANDBOX_BASE_URL,
+    BrokerConfig,
+)
 from app.broker.executor import SandboxExecutor, target_quantity
 from app.broker.gateway import (
+    BrokerAccount,
     BrokerOrder,
     BrokerPosition,
     BrokerRequestError,
@@ -197,9 +204,12 @@ class FakeGateway:
         self.submits: list[OrderRequest] = []
         self.crash_after_post = False
         self.crash_before_post = False
+        self.acct = BrokerAccount(
+            "PA1", "ACTIVE", "USD", 100_000.0, 100_000.0, 400_000.0, False, False
+        )
 
-    def account(self) -> Any:
-        raise NotImplementedError
+    def account(self) -> BrokerAccount:
+        return self.acct
 
     def position(self, symbol: str) -> BrokerPosition | None:
         q = self.positions.get(symbol)
@@ -233,9 +243,17 @@ class FakeGateway:
 
 
 CAL = TradingCalendar("XNYS")
+# Submission mechanics are tested with market-on-open orders and the explicit, non-default
+# capital policy; the defaults (limit-on-open buys, block_unbounded) are tested in
+# test_opg_and_capital.py and test_loo.py.
+MECH = BrokerConfig(
+    order_policy=OPG_WHOLE_SHARES, capital_policy=CAPITAL_REFERENCE_PRICE_UNGUARANTEED
+)
 
 
 def account_with_pending_entry(root: Path, states: list[str] | None = None) -> tuple[str, datetime]:
+    """Paper account whose last decision (close of Mon 2026-10-05) is pending for the open of
+    Tue 2026-10-06; returns (account id, a time inside the OPG submission window)."""
     states = states or ["FLAT"] * 5 + ["LONG"]
     bars = make_bars([(500, 501, 499, 500)] * len(states), start=date(2026, 9, 28))
     times = session_times(pd.DatetimeIndex(bars.index), CAL)
@@ -249,7 +267,8 @@ def account_with_pending_entry(root: Path, states: list[str] | None = None) -> t
     )
     st.process_many(inputs)
     last_close = pd.Timestamp(times["observed_at"].iloc[-1]).to_pydatetime()
-    return st.account_id, last_close + timedelta(hours=1)  # before the next open
+    # 16:00 ET close + 4 h = 20:00 ET: after the 19:00 ET OPG queue opening, before the next open
+    return st.account_id, last_close + timedelta(hours=4)
 
 
 def settings(mode: str = "paper") -> Settings:
@@ -273,7 +292,7 @@ def executor(
         store.link(acct)
     store.set_armed(armed)
     return SandboxExecutor(
-        cfg or BrokerConfig(), store, settings(mode), tmp / "paper", gw, clock=lambda: now
+        cfg or MECH, store, settings(mode), tmp / "paper", gw, clock=lambda: now, calendar=CAL
     )
 
 
@@ -367,14 +386,14 @@ def test_stale_instruction_is_never_sent(tmp_path: Path) -> None:
 def test_caps_symbol_exit_and_no_short(tmp_path: Path) -> None:
     _, now = account_with_pending_entry(tmp_path / "paper")
     gw = FakeGateway()
-    small = BrokerConfig(max_order_notional=1_000.0)
+    small = replace(MECH, max_order_notional=1_000.0)
     assert (
         executor(tmp_path, gw, now, cfg=small)
         .sync(dry_run=True)
         .items[0]
         .detail.startswith("notional")
     )
-    other = BrokerConfig(allowed_symbols=("QQQ",))
+    other = replace(MECH, allowed_symbols=("QQQ",))
     assert executor(tmp_path, gw, now, cfg=other).sync(dry_run=True).items[0].detail == (
         "symbol_not_allowed"
     )
@@ -405,10 +424,10 @@ def test_reconciliation(tmp_path: Path) -> None:
     store.link(acct)
     gw = FakeGateway()
     gw.positions["SPY"] = 20.0  # local exposure ~1.0 at 500 -> expected 19 or 20 shares
-    rec = reconcile(BrokerConfig(), store, gw, tmp_path / "paper", now)  # type: ignore[arg-type]
+    rec = reconcile(MECH, store, gw, tmp_path / "paper", now)  # type: ignore[arg-type]
     assert rec.accounts[0]["status"] == "ok" and rec.mismatches == 0
     gw.positions["SPY"] = 3.0
-    rec2 = reconcile(BrokerConfig(), store, gw, tmp_path / "paper", now)  # type: ignore[arg-type]
+    rec2 = reconcile(MECH, store, gw, tmp_path / "paper", now)  # type: ignore[arg-type]
     assert rec2.mismatches == 1 and rec2.alerts[0].event_type == "BROKER_RECONCILIATION_MISMATCH"
 
 
@@ -471,5 +490,7 @@ def test_trading_modes_and_blocker_unchanged() -> None:
     with pytest.raises(RealMoneyExecutionBlockedError):
         refuse_real_money_order()
     assert alpaca_mod.AlpacaPaperGateway.environment == "sandbox"
-    assert replace(BrokerConfig(), allocated_capital=1.0).vendor == "alpaca"
+    assert (
+        replace(BrokerConfig(), allocated_capital=1.0, order_cost_allowance=0.0).vendor == "alpaca"
+    )
     assert BacktestConfig().initial_capital == 100_000.0

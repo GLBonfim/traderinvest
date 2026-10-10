@@ -13,12 +13,18 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.backtest.data import load_backtest_bars
-from app.broker.config import BrokerConfig
+from app.broker.config import (
+    CAPITAL_REFERENCE_PRICE_UNGUARANTEED,
+    OPG_WHOLE_SHARES,
+    BrokerConfig,
+)
 from app.broker.executor import SandboxExecutor, derive_intent
 from app.broker.reconcile import reconcile
 from app.broker.store import BrokerStore
+from app.broker.timing import opg_window
 from app.core.config import Settings, TradingMode
 from app.dashboard.services import paper as paper_svc
+from app.data.calendar import TradingCalendar
 from app.paper.engine import PaperTradingEngine, baseline_inputs
 from tests.unit.broker.test_broker import FakeGateway
 
@@ -62,8 +68,14 @@ def test_sandbox_order_from_a_real_pending_entry(spy_inputs, tmp_path: Path) -> 
         instrument="SPY",
     )
     store.process_many(upto)
-    now = upto[-1].observed_at.to_pydatetime() + timedelta(minutes=45)  # before the next open
-    cfg = BrokerConfig()
+    window = opg_window(TradingCalendar("XNYS"), upto[-1].effective_at.to_pydatetime(), 60.0)
+    now = window.opens_at + timedelta(minutes=1)  # inside the OPG submission window
+    assert now > upto[-1].observed_at.to_pydatetime()
+    # the default capital policy holds back the market buy (ADR-0026); the submission mechanics
+    # are exercised with the explicit, non-guaranteeing policy
+    cfg = BrokerConfig(
+        order_policy=OPG_WHOLE_SHARES, capital_policy=CAPITAL_REFERENCE_PRICE_UNGUARANTEED
+    )
 
     intent = derive_intent(store.dir, cfg, now)
     assert intent is not None and intent.pending_kind == "entry"
@@ -85,6 +97,26 @@ def test_sandbox_order_from_a_real_pending_entry(spy_inputs, tmp_path: Path) -> 
     ex = SandboxExecutor(cfg, bstore, paper_settings(), tmp_path / "paper", gw, clock=lambda: now)
     assert [i.outcome for i in ex.sync(dry_run=True).items] == ["blocked"]  # unarmed by default
     bstore.set_armed(True)
+    market = SandboxExecutor(
+        BrokerConfig(order_policy=OPG_WHOLE_SHARES),
+        bstore,
+        paper_settings(),
+        tmp_path / "paper",
+        gw,
+        clock=lambda: now,
+    )
+    assert market.sync(dry_run=True).items[0].detail.startswith("capital_bound_unenforceable")
+    loo_cfg = BrokerConfig()  # default: limit-on-open buys bounded by the budget (ADR-0027)
+    loo = SandboxExecutor(
+        loo_cfg, bstore, paper_settings(), tmp_path / "paper", gw, clock=lambda: now
+    )
+    loo_order = loo.sync(dry_run=True).items[0].order
+    assert loo_order is not None and loo_order["order_type"] == "limit"
+    assert loo_order["qty"] == math.floor(
+        d["risk_approved_target"] * loo_cfg.sizing_capital / upto[-1].close
+    )
+    assert loo_order["qty"] * loo_order["limit_price"] <= loo_cfg.sizing_capital
+    assert gw.submits == []
     dry = ex.sync(dry_run=True)
     assert dry.items[0].outcome == "would_submit" and gw.submits == []
     rep = ex.sync(dry_run=False)

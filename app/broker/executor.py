@@ -6,14 +6,19 @@ account (Phase 12 ledger) whose risk-approved instruction is pending (entry, exi
 and whose scheduled session open is still in the future. There is no API to submit an
 arbitrary/manual order: `sync()` only ever derives orders from those decisions.
 
-Sizing (deterministic, point-in-time): target qty = approved exposure x allocated capital /
-decision close; whole shares (floor) under the default `opg_whole_shares` policy (opening
-auction, the closest match to the project's next-session-open convention); delta = target qty -
-current sandbox position; an exit sells exactly the sandbox position. Never short.
+Sizing (deterministic, point-in-time): target qty = approved exposure x sizing capital /
+decision close; whole shares (floor) under the opening-auction policies (the closest match to
+the project's next-session-open convention); delta = target qty - current sandbox position; an
+exit sells exactly the sandbox position. Never short. Under the default
+`opg_whole_shares_loo_buys` policy (ADR-0027) the sizing capital is the effective budget
+(allocated capital - cost allowance) and a buy is a LIMIT-on-open order whose limit price is the
+highest valid price with (held + bought) x limit <= effective budget; sells stay market-on-open.
 
 Gates, in order (a failing gate blocks and is recorded; nothing is raised): kill switch, armed,
-trading mode == paper, sandbox credentials present, symbol allowed, not already submitted,
-no short, notional cap, daily order cap. Idempotency: deterministic client_order_id
+trading mode == paper, sandbox credentials present, symbol allowed, OPG submission window, not
+already submitted, no short, notional cap (risk limit), sandbox budget / capital policy (buys),
+sandbox account tradable with enough cash (buys), daily order cap; the OPG window is checked
+again immediately before the POST (ADR-0026). Idempotency: deterministic client_order_id
 (`qp-<account>-<decision>`), write-ahead `submit_attempted`, lookup by client_order_id before
 every POST and after any ambiguous failure.
 """
@@ -29,10 +34,18 @@ import pandas as pd
 
 from app.alerts.models import AlertEvent, make_alert
 from app.alerts.monitor import paper_account_dirs, read_paper_account
-from app.broker.config import OPG_WHOLE_SHARES, BrokerConfig
-from app.broker.gateway import BrokerGateway, BrokerRequestError, OrderRequest
+from app.broker.config import (
+    CAPITAL_BLOCK_UNBOUNDED,
+    OPG_LOO_BUYS,
+    WHOLE_SHARE_POLICIES,
+    BrokerConfig,
+)
+from app.broker.gateway import BrokerGateway, BrokerRequestError, BrokerSafetyError, OrderRequest
+from app.broker.pricing import budget_limit_price
 from app.broker.store import BrokerStore
+from app.broker.timing import opg_block_reason
 from app.core.config import Settings, TradingMode
+from app.data.calendar import TradingCalendar
 
 SANDBOX_TAG = "BROKER SANDBOX (paper account, no real money)"
 EPS = 1e-9
@@ -74,7 +87,7 @@ class SyncReport:
 
 def target_quantity(exposure: float, capital: float, price: float, policy: str) -> float:
     raw = max(0.0, exposure) * capital / price
-    if policy == OPG_WHOLE_SHARES:
+    if policy in WHOLE_SHARE_POLICIES:
         return float(math.floor(raw + EPS))
     return math.floor(raw * 1e9) / 1e9
 
@@ -105,7 +118,7 @@ def derive_intent(account_dir: Path, config: BrokerConfig, now: datetime) -> Int
         reference_price=price,
         observed_at=d["observed_at"],
         scheduled_for=d["scheduled_execution_at"],
-        target_qty=target_quantity(exposure, config.allocated_capital, price, config.order_policy),
+        target_qty=target_quantity(exposure, config.sizing_capital, price, config.order_policy),
     )
 
 
@@ -119,6 +132,7 @@ class SandboxExecutor:
         gateway: BrokerGateway | None,
         *,
         clock: Callable[[], datetime] | None = None,
+        calendar: TradingCalendar | None = None,
     ) -> None:
         self.cfg = config
         self.store = store
@@ -126,6 +140,89 @@ class SandboxExecutor:
         self.paper_root = paper_root
         self.gateway = gateway
         self.clock = clock or (lambda: datetime.now(UTC))
+        self._calendar = calendar
+
+    @property
+    def calendar(self) -> TradingCalendar:
+        if self._calendar is None:
+            self._calendar = TradingCalendar("XNYS")
+        return self._calendar
+
+    def _timing_block(self, intent: Intent, time_in_force: str, now: datetime) -> str:
+        if time_in_force != "opg":
+            return ""
+        return opg_block_reason(
+            self.calendar,
+            pd.Timestamp(intent.scheduled_for).to_pydatetime(),
+            now,
+            self.cfg.opg_safety_seconds,
+        )
+
+    def _buy_limit_price(self, held: float, qty: float) -> float | None:
+        """LOO policy: highest valid limit with (held + qty) x limit <= effective budget, so the
+        resulting position's value at the fill price stays within it (ADR-0027)."""
+        if self.cfg.order_policy != OPG_LOO_BUYS:
+            return None
+        return float(budget_limit_price(self.cfg.sizing_capital, held + qty))
+
+    def _capital_block(
+        self, intent: Intent, held: float, qty: float, limit_price: float | None = None
+    ) -> str:
+        """Sandbox budget for a buy: value of the resulting position <= budget, at a price that
+        bounds the fill. A limit order is bounded by its limit price; a market order is not
+        (ADR-0026, ADR-0027)."""
+        if limit_price is None and self.cfg.capital_policy == CAPITAL_BLOCK_UNBOUNDED:
+            return (
+                "capital_bound_unenforceable: a market order has no maximum fill price, so its "
+                f"cost cannot be kept within the sandbox budget {self.cfg.allocated_capital:.2f}"
+            )
+        # limit: guaranteed bound; CAPITAL_REFERENCE_PRICE_UNGUARANTEED: decision close only
+        price = intent.reference_price if limit_price is None else limit_price
+        cost = (held + qty) * price
+        if cost > self.cfg.sizing_capital + EPS:
+            return f"sandbox_budget_exceeded: {cost:.2f} > {self.cfg.sizing_capital:.2f}"
+        return ""
+
+    def _account_block(self, qty: float, price: float) -> str:
+        """The sandbox account itself (independent of the budget): tradable, and enough cash for
+        the estimated cost without margin."""
+        if self.gateway is None:  # guarded by _gate; kept explicit
+            raise RuntimeError("no sandbox gateway")
+        try:
+            acct = self.gateway.account()
+        except BrokerRequestError as exc:
+            return f"sandbox_account_unavailable: {exc}"
+        if acct.status != "ACTIVE" or acct.trading_blocked or acct.account_blocked:
+            return f"sandbox_account_not_tradable: status {acct.status}"
+        cost = qty * price
+        available = min(acct.cash, acct.buying_power)
+        if cost > available + EPS:
+            return f"insufficient_buying_power: {cost:.2f} > {available:.2f} (no margin)"
+        return ""
+
+    def _block(
+        self, item: SyncItem, intent: Intent, reason: str, report: SyncReport, dry_run: bool
+    ) -> SyncItem:
+        item.outcome, item.detail = "blocked", reason
+        if not dry_run:
+            self.store.record(
+                "blocked", intent.client_order_id, reason=reason, intent=asdict(intent)
+            )
+            self.store.bump("blocked")
+            self._alert(
+                report,
+                "BROKER_ORDER_BLOCKED",
+                (intent.client_order_id, reason.split(":")[0]),
+                f"order blocked ({reason.split(':')[0]})",
+                f"A risk-approved instruction was not sent: {reason}.",
+                {
+                    "symbol": intent.symbol,
+                    "reason": reason,
+                    "client_order_id": intent.client_order_id,
+                },
+                intent.account_id,
+            )
+        return item
 
     def _alert(
         self,
@@ -193,27 +290,14 @@ class SandboxExecutor:
             item.outcome, item.detail = "already_submitted", f"status {known['status']}"
             return item
         reason = self._gate(intent)
-        if reason:
+        if reason == "not_armed":  # the normal default state: neither recorded nor alerted
             item.outcome, item.detail = "blocked", reason
-            if not dry_run and reason not in ("not_armed",):
-                self.store.record(
-                    "blocked", intent.client_order_id, reason=reason, intent=asdict(intent)
-                )
-                self.store.bump("blocked")
-                self._alert(
-                    report,
-                    "BROKER_ORDER_BLOCKED",
-                    (intent.client_order_id, reason),
-                    f"order blocked ({reason})",
-                    f"A risk-approved instruction was not sent: {reason}.",
-                    {
-                        "symbol": intent.symbol,
-                        "reason": reason,
-                        "client_order_id": intent.client_order_id,
-                    },
-                    intent.account_id,
-                )
             return item
+        whole = self.cfg.order_policy in WHOLE_SHARE_POLICIES
+        tif = "opg" if whole else "day"
+        reason = reason or self._timing_block(intent, tif, now)
+        if reason:
+            return self._block(item, intent, reason, report, dry_run)
         if self.gateway is None:  # guarded by _gate; kept explicit
             raise RuntimeError("no sandbox gateway")
         pos = self.gateway.position(intent.symbol)
@@ -223,7 +307,7 @@ class SandboxExecutor:
             return item
         target = 0.0 if intent.pending_kind == "exit" else intent.target_qty
         delta = target - held
-        if abs(delta) < EPS or (self.cfg.order_policy == OPG_WHOLE_SHARES and abs(delta) < 1):
+        if abs(delta) < EPS or (whole and abs(delta) < 1):
             item.outcome, item.detail = (
                 "no_order_required",
                 f"sandbox holds {held}, target {target}",
@@ -231,13 +315,21 @@ class SandboxExecutor:
             return item
         side = "buy" if delta > 0 else "sell"
         qty = abs(delta) if side == "buy" else min(abs(delta), held)
-        notional = qty * intent.reference_price
+        limit = self._buy_limit_price(held, qty) if side == "buy" else None
+        price_bound = intent.reference_price if limit is None else limit  # worst case for a limit
+        notional = qty * price_bound
         if notional > self.cfg.max_order_notional:
             reason = f"notional {notional:.2f} exceeds cap {self.cfg.max_order_notional:.2f}"
             item.outcome, item.detail = "blocked", reason
             if not dry_run:
                 self.store.record("blocked", intent.client_order_id, reason=reason)
             return item
+        if side == "buy":  # sells reduce exposure and are never held back by capital checks
+            reason = self._capital_block(intent, held, qty, limit) or self._account_block(
+                qty, price_bound
+            )
+            if reason:
+                return self._block(item, intent, reason, report, dry_run)
         if self.store.submitted_today(now.date().isoformat()) >= self.cfg.max_orders_per_day:
             item.outcome, item.detail = "blocked", "daily order cap reached"
             return item
@@ -246,7 +338,9 @@ class SandboxExecutor:
             intent.symbol,
             side,
             qty,
-            "opg" if self.cfg.order_policy == OPG_WHOLE_SHARES else "day",
+            tif,
+            order_type="market" if limit is None else "limit",
+            limit_price=limit,
         )
         item.order = asdict(req)
         if dry_run:
@@ -264,7 +358,18 @@ class SandboxExecutor:
             raise RuntimeError("no sandbox gateway")
         try:
             existing = self.gateway.order_by_client_id(req.client_order_id)
+            if existing is None:
+                # last check at the submission point: time has passed since the gates ran
+                late = self._timing_block(intent, req.time_in_force, self.clock())
+                if late:
+                    self._block(item, intent, late, report, dry_run=False)
+                    return
             order = existing or self.gateway.submit(req)
+        except BrokerSafetyError as exc:  # refused locally by the adapter: nothing was sent
+            self.store.record("failed", req.client_order_id, error=str(exc), status=None)
+            self.store.bump("failed")
+            item.outcome, item.detail = "failed", f"refused before sending: {exc}"
+            return
         except BrokerRequestError as exc:
             if exc.ambiguous:
                 self.store.record("unknown", req.client_order_id, error=str(exc))
@@ -290,20 +395,25 @@ class SandboxExecutor:
             broker_status=order.status,
             filled_qty=order.filled_qty,
             filled_avg_price=order.filled_avg_price,
+            broker_order_type=order.order_type,
+            broker_limit_price=order.limit_price,
         )
         self.store.bump("submitted")
         item.outcome, item.detail = "submitted", f"broker status {order.status}"
+        limit = "" if req.limit_price is None else f" limit {req.limit_price:.2f}"
         self._alert(
             report,
             "BROKER_ORDER_SUBMITTED",
             (req.client_order_id,),
-            f"{req.side} {req.qty:g} {req.symbol} ({req.time_in_force})",
+            f"{req.side} {req.qty:g} {req.symbol} {req.order_type}{limit} ({req.time_in_force})",
             f"Sandbox order submitted for risk-approved decision {intent.decision_id}.",
             {
                 "symbol": req.symbol,
                 "client_order_id": req.client_order_id,
                 "side": req.side,
                 "qty": req.qty,
+                "order_type": req.order_type,
+                "limit_price": req.limit_price,
                 "time_in_force": req.time_in_force,
             },
             intent.account_id,

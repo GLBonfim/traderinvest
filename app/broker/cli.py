@@ -63,8 +63,12 @@ def status(cfg: BrokerConfig, store: BrokerStore) -> dict[str, object]:
         "kill_switch": store.state["kill_switch"],
         "linked_accounts": store.linked_accounts,
         "order_policy": cfg.order_policy,
+        "capital_policy": cfg.capital_policy,
+        "opg_safety_seconds": cfg.opg_safety_seconds,
         "limits": {
             "allocated_capital": cfg.allocated_capital,
+            "order_cost_allowance": cfg.order_cost_allowance,
+            "sizing_capital": cfg.sizing_capital,
             "max_order_notional": cfg.max_order_notional,
             "max_orders_per_day": cfg.max_orders_per_day,
             "allowed_symbols": list(cfg.allowed_symbols),
@@ -166,6 +170,9 @@ def main(argv: list[str] | None = None) -> int:
             out = {
                 "accounts": rec.accounts,
                 "partial_fills": rec.partial_fills,
+                "budget_breaches": rec.budget_breaches,
+                "limit_violations": rec.limit_violations,
+                "unfilled": rec.unfilled,
                 "mismatches": rec.mismatches,
             }
     print(json.dumps(out, indent=2, default=str))

@@ -444,6 +444,65 @@ acceptance; they are superseded by a new ADR.
   owner approval. Sandbox fills will differ from the local simulation (auction price, whole
   shares, vendor-simulated partial fills); reconciliation reports differences without acting.
 
+## ADR-0026 — Broker sandbox: capital policy and OPG submission window
+
+- **Status:** Accepted (2026-10-10, Phase 15 validation; amends ADR-0025, which stays in force)
+- **Context:** The pre-submission review found that (1) the 10,000 sandbox capital only sized
+  the order at the decision close: a market `opg` order has no maximum price, so its cost was
+  unbounded; (2) the OPG cut-off was not enforced — an order sent between 09:28 and 09:30 ET
+  (or any time in Alpaca's 09:28–19:00 ET rejection band) would be rejected by Alpaca.
+- **Decision:**
+  - Three separate limits: sandbox budget (`allocated_capital`, cost of the resulting position),
+    risk limits (`max_order_notional`, `max_orders_per_day`, per order/day), and the Alpaca
+    account (ACTIVE, not blocked, estimated cost ≤ min(cash, buying power), no margin), each
+    checked independently; the account is never used to size anything.
+  - `capital_policy` (default `block_unbounded`): a buy whose fill price cannot be bounded — every
+    market order — is blocked (`capital_bound_unenforceable`). Sells are never held back by
+    capital checks. `reference_price_unguaranteed` (budget checked at the decision close only)
+    is never the default and is documented as not a guarantee. Reconciliation reports filled
+    buys whose actual cost exceeded the budget.
+  - OPG window (`app/broker/timing.py`, pure, injectable clock): send only at or after 19:00 ET
+    of the previous XNYS session and before 09:28 ET of the auction session, never inside the
+    daily 09:28–19:00 ET band (applied on every calendar day because the vendor documentation
+    is silent about weekends/holidays), each boundary tightened by `opg_safety_seconds` (60 s);
+    America/New_York via zoneinfo (DST), sessions from the XNYS calendar (holidays). Checked
+    with the gates and again immediately before the POST.
+- **Consequences:** With the defaults no market buy is sent; the first sandbox entry is blocked
+  until the owner chooses between (a) a price-bounded limit-on-open order (limit = budget /
+  quantity; may not fill), (b) accepting an unbounded market cost
+  (`reference_price_unguaranteed`), or (c) keeping entries blocked. Some times Alpaca would
+  accept (e.g. a weekend afternoon) are skipped by the conservative band.
+
+## ADR-0027 — Broker sandbox: limit-on-open buys bounded by the budget
+
+- **Status:** Accepted (2026-10-10, owner choice (a) of ADR-0026)
+- **Context:** A market-on-open buy cannot be kept within the 10,000 sandbox budget. Alpaca's
+  documentation (2026-10-10) supports `opg` with type `limit` as "limit on open" (LOO) for
+  equities, whole shares only, `limit_price` at most 2 decimals (≥ 1.00) or 4 (< 1.00). The
+  order-type table marks OPG with "contact the sales team", without saying whether this applies
+  to Trading API / paper accounts.
+- **Decision:**
+  - New default order policy `opg_whole_shares_loo_buys`: buys are limit-on-open, sells stay
+    market-on-open (an exit is never held back by a price limit).
+  - Effective budget = `allocated_capital − order_cost_allowance` (10,000 − 1.00; Alpaca charges
+    no commission on equity buys, the allowance mirrors the project's flat research commission).
+    Target quantity is sized on the effective budget at the decision close (whole shares).
+  - `limit = floor_to_increment(effective budget / (held + bought))` in `Decimal`
+    (`app/broker/pricing.py`): the highest valid price with (held + bought) × limit ≤ effective
+    budget; ≥ the decision close by construction. The notional cap and the account cash check use
+    the limit (worst case). The adapter refuses locally limit orders without a price, with
+    fractional shares or off the increment, and market orders with a price.
+  - The OPG window (ADR-0026) applies unchanged and is re-checked before the POST.
+  - Reconciliation adds `unfilled` (final state without any fill) and `limit_violations` (a buy
+    filled above its limit, which should be impossible); partial fills and budget breaches as
+    before. Nothing is corrected or retried automatically.
+- **Consequences:** The resulting position's value at the fill price is ≤ the effective budget
+  and, with the allowance, ≤ 10,000 — a guarantee resting on the vendor honouring the limit. An
+  entry may not fill (auction above the limit); the sandbox then diverges from the local
+  simulation, which always fills at the open. The sandbox sizes one share less than before in
+  some cases (sizing on 9,999). Vendor acceptance of LOO for this account is unverified until
+  the first submission.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

@@ -4,7 +4,9 @@ Verified against Alpaca's documentation (2026-10-08): paper base URL
 https://paper-api.alpaca.markets (the only endpoint this project uses), key headers
 APCA-API-KEY-ID / APCA-API-SECRET-KEY, POST /v2/orders (client_order_id <= 128 chars;
 time_in_force opg = opening auction; fractional/notional orders only with `day`),
-GET /v2/orders:by_client_order_id, GET /v2/account, GET /v2/positions/{symbol}.
+GET /v2/orders:by_client_order_id, GET /v2/account, GET /v2/positions/{symbol}. Limit-on-open
+(2026-10-10): `opg` with type `limit` = "limit on open" (LOO); `limit_price` required, at most 2
+decimals at >= 1.00 (4 below); limit orders take whole shares only.
 
 Safety: the endpoint is the constant SANDBOX_BASE_URL (no parameter, setting or environment
 variable can change it) and is asserted again on every request; https://api.alpaca.markets is
@@ -31,6 +33,7 @@ from app.broker.gateway import (
     OrderRequest,
     assert_sandbox_url,
 )
+from app.broker.pricing import format_limit_price
 
 # (method, url, headers, body, timeout) -> (status, response body)
 Transport = Callable[[str, str, dict[str, str], bytes | None, float], tuple[int, bytes]]
@@ -169,6 +172,21 @@ class AlpacaPaperGateway:
             "time_in_force": request.time_in_force,
             "client_order_id": request.client_order_id,
         }
+        if request.order_type == "limit":
+            # Alpaca: fractional quantities only for market/day; limit prices on the increment
+            if request.limit_price is None:
+                raise BrokerSafetyError("limit order without a limit_price")
+            if request.qty != int(request.qty):
+                raise BrokerSafetyError("limit orders must use whole shares")
+            try:
+                payload["limit_price"] = format_limit_price(request.limit_price)
+            except ValueError as exc:
+                raise BrokerSafetyError(f"invalid limit_price: {exc}") from None
+        elif request.order_type == "market":
+            if request.limit_price is not None:
+                raise BrokerSafetyError("market order with a limit_price")
+        else:
+            raise BrokerSafetyError(f"unsupported order type {request.order_type!r}")
         status, d = self._call("POST", "/v2/orders", payload)
         return self._order(self._ok(status, d, "order submission"))
 
@@ -185,4 +203,6 @@ class AlpacaPaperGateway:
             filled_avg_price=_f(d.get("filled_avg_price")),
             submitted_at=d.get("submitted_at"),
             filled_at=d.get("filled_at"),
+            order_type=d.get("type"),
+            limit_price=_f(d.get("limit_price")),
         )

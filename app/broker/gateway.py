@@ -75,7 +75,8 @@ class OrderRequest:
     side: str  # buy | sell
     qty: float
     time_in_force: str  # opg | day
-    order_type: str = "market"
+    order_type: str = "market"  # market | limit
+    limit_price: float | None = None  # required for limit, forbidden for market (ADR-0027)
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,8 @@ class BrokerOrder:
     filled_avg_price: float | None
     submitted_at: str | None
     filled_at: str | None
+    order_type: str | None = None
+    limit_price: float | None = None
 
 
 class BrokerGateway(Protocol):

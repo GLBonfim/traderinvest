@@ -5,6 +5,41 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+Branch `feature/alpaca-paper-validation`. No external sandbox order has been placed.
+
+### Added
+- OPG submission window (`app/broker/timing.py`, ADR-0026): an `opg` order is sent only at or
+  after 19:00 ET of the previous XNYS session, before 09:28 ET of the auction session and
+  outside the daily 09:28–19:00 ET rejection band, with a 60 s safety margin; checked with the
+  gates and again immediately before the POST.
+- Capital policy (ADR-0026): default `block_unbounded` blocks every market buy, whose cost
+  cannot be bounded by the 10,000 sandbox budget; sells are never held back.
+  `reference_price_unguaranteed` (not default) checks the budget at the decision close only.
+- Sandbox account check before a buy: ACTIVE, not blocked, estimated cost ≤ min(cash, buying
+  power) (no margin), separate from the budget and the risk limits.
+- Reconciliation: `budget_breaches` (filled buys above the budget); partial fills now include
+  opg orders partly filled and cancelled after the open.
+- 58 broker unit tests (window: cut-off, queue opening, band, weekends, holidays, DST, invalid
+  schedules; capital policy; buying power; duplicates; partial fills; rejections; the real
+  adapter over a simulated transport).
+- Limit-on-open buys (ADR-0027): new default order policy `opg_whole_shares_loo_buys` — buys are
+  `limit` + `opg` at `floor_to_increment(effective budget / resulting shares)` (Decimal,
+  `app/broker/pricing.py`), effective budget = 10,000 − 1.00 cost allowance; sells stay
+  market-on-open. Adapter sends `limit_price` and refuses locally invalid limit/market requests;
+  a local refusal is recorded as failed without sending. Reconciliation adds `unfilled` and
+  `limit_violations`. 19 LOO tests (exact pricing incl. 5,000 random cases, payload, within /
+  above the limit, unfilled, partial, rejection, duplicate, insufficient budget / cash, notional
+  cap at the limit, sells, rebalance, OPG window).
+
+### Changed
+- Default order policy `opg_whole_shares` → `opg_whole_shares_loo_buys`; sizing on the effective
+  budget (9,999), so some quantities are one share lower.
+- Broker test fixtures use a time inside the OPG window (20:00 ET) and, for submission-mechanics
+  tests, the explicit `opg_whole_shares` + `reference_price_unguaranteed` policies; the SPY
+  integration test derives its time from the window, asserts that a market-on-open buy is
+  blocked by the default capital policy and that the default policy builds a budget-bounded
+  limit-on-open buy.
+
 ## [0.15.0] — 2026-10-09 — Phase 15: Broker Sandbox Integration
 
 Alpaca PAPER account only — no real money. No external sandbox order has been placed.

@@ -2,12 +2,17 @@
 
 For every linked paper account the expected sandbox quantity is what the executor targets:
 0 if the local simulation is flat; otherwise target_quantity(approved exposure of the decision
-behind the last local fill x allocated capital / that decision's close) under the configured
+behind the last local fill x sizing capital / that decision's close) under the configured
 order policy — the same sizing the order was built with, so price moves after the decision do
 not create false mismatches. Actual = sandbox position. A difference of at least one share
 (whole-share policy) or any difference above 1e-9 (fractional policy) is a mismatch. Recorded
-sandbox orders whose fill quantity differs from the requested quantity (paper partial fills) are
-listed too. Nothing is corrected automatically: reconciliation never submits an order.
+sandbox orders whose fill quantity differs from the requested quantity (paper partial fills,
+including an opg order partly filled in the auction and cancelled for the rest) are listed too,
+as are buys whose actual filled cost exceeded the sandbox budget (ADR-0026), buys filled above
+their limit price, and orders that ended without any fill (e.g. a limit-on-open not reached in
+the auction, ADR-0027). The local simulation always fills at the open, so an unfilled sandbox
+limit order also shows as a position mismatch. Nothing is corrected automatically:
+reconciliation never submits an order.
 """
 
 from dataclasses import dataclass, field
@@ -17,10 +22,14 @@ from typing import Any
 
 from app.alerts.models import AlertEvent, make_alert
 from app.alerts.monitor import paper_account_dirs, read_paper_account
-from app.broker.config import OPG_WHOLE_SHARES, BrokerConfig
+from app.broker.config import WHOLE_SHARE_POLICIES, BrokerConfig
 from app.broker.executor import SANDBOX_TAG, target_quantity
 from app.broker.gateway import BrokerGateway
 from app.broker.store import BrokerStore
+
+# final broker states of an order that ended without any fill (e.g. a limit-on-open whose limit
+# was below the auction price is cancelled after the open)
+UNFILLED_FINAL = ("canceled", "expired", "done_for_day", "rejected")
 
 
 def expected_quantity(events: list[dict[str, Any]], config: BrokerConfig) -> tuple[float, str]:
@@ -36,7 +45,7 @@ def expected_quantity(events: list[dict[str, Any]], config: BrokerConfig) -> tup
     d = decisions[orders[fills[-1]["order_id"]]["decision_id"]]
     price = float(snaps[d["bar_ts"]]["mark_price"])
     qty = target_quantity(
-        float(d["risk_approved_target"]), config.allocated_capital, price, config.order_policy
+        float(d["risk_approved_target"]), config.sizing_capital, price, config.order_policy
     )
     return qty, f"decision {d['decision_id']} (exposure {d['risk_approved_target']}, close {price})"
 
@@ -46,6 +55,9 @@ class Reconciliation:
     at: str
     accounts: list[dict[str, Any]] = field(default_factory=list)
     partial_fills: list[dict[str, Any]] = field(default_factory=list)
+    budget_breaches: list[dict[str, Any]] = field(default_factory=list)
+    limit_violations: list[dict[str, Any]] = field(default_factory=list)
+    unfilled: list[dict[str, Any]] = field(default_factory=list)
     alerts: list[AlertEvent] = field(default_factory=list)
 
     @property
@@ -62,7 +74,7 @@ def reconcile(
 ) -> Reconciliation:
     rec = Reconciliation(now.isoformat())
     dirs = {p.name: p for p in paper_account_dirs(paper_root)}
-    tol = 1.0 if config.order_policy == OPG_WHOLE_SHARES else 1e-9
+    tol = 1.0 if config.order_policy in WHOLE_SHARE_POLICIES else 1e-9
     for acct in store.linked_accounts:
         if acct not in dirs:
             rec.accounts.append({"account_id": acct, "status": "missing_local_account"})
@@ -107,13 +119,71 @@ def reconcile(
                 )
             )
     for cid, o in store.orders().items():
-        req = (o.get("order") or {}).get("qty")
+        order = o.get("order") or {}
+        req = order.get("qty")
+        filled = float(o.get("filled_qty") or 0)
         if (
             req is not None
-            and o.get("status") == "filled"
-            and abs(float(o.get("filled_qty") or 0) - float(req)) > 1e-9
+            and (filled > 0 or o.get("status") == "filled")
+            and abs(filled - float(req)) > 1e-9
         ):
             rec.partial_fills.append(
-                {"client_order_id": cid, "requested": req, "filled": o.get("filled_qty")}
+                {
+                    "client_order_id": cid,
+                    "requested": req,
+                    "filled": filled,
+                    "status": o.get("status"),
+                }
+            )
+        price = o.get("filled_avg_price")
+        if order.get("side") == "buy" and filled > 0 and price is not None:
+            cost = filled * float(price)
+            if cost > config.allocated_capital + 1e-9:
+                row = {
+                    "client_order_id": cid,
+                    "filled": filled,
+                    "filled_avg_price": float(price),
+                    "filled_cost": cost,
+                    "budget": config.allocated_capital,
+                }
+                rec.budget_breaches.append(row)
+                rec.alerts.append(
+                    make_alert(
+                        "BROKER_RECONCILIATION_MISMATCH",
+                        key_parts=("budget", cid),
+                        occurred_at=now.isoformat(),
+                        instrument=order.get("symbol"),
+                        title=f"{SANDBOX_TAG}: filled cost exceeded the sandbox budget",
+                        message=f"{SANDBOX_TAG}. Order {cid} filled {filled:g} at "
+                        f"{float(price):.2f} = {cost:.2f}, above the budget "
+                        f"{config.allocated_capital:.2f}. Nothing is corrected automatically.",
+                        payload=row,
+                    )
+                )
+            limit = order.get("limit_price")
+            if limit is not None and float(price) > float(limit) + 1e-9:
+                row = {"client_order_id": cid, "filled_avg_price": float(price), "limit": limit}
+                rec.limit_violations.append(row)
+                rec.alerts.append(
+                    make_alert(
+                        "BROKER_RECONCILIATION_MISMATCH",
+                        key_parts=("limit", cid),
+                        occurred_at=now.isoformat(),
+                        instrument=order.get("symbol"),
+                        title=f"{SANDBOX_TAG}: buy filled above its limit price",
+                        message=f"{SANDBOX_TAG}. Order {cid} filled at {float(price):.2f}, "
+                        f"above its limit {float(limit):.2f}. Nothing is corrected automatically.",
+                        payload=row,
+                    )
+                )
+        if o.get("status") in UNFILLED_FINAL and filled == 0 and req is not None:
+            rec.unfilled.append(
+                {
+                    "client_order_id": cid,
+                    "status": o.get("status"),
+                    "order_type": order.get("order_type"),
+                    "limit_price": order.get("limit_price"),
+                    "requested": req,
+                }
             )
     return rec
