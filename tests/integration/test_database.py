@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.main import app
-from app.core.config import Settings, get_settings
+from app.core.config import Settings, TradingMode, get_settings
 from app.database.models import Instrument, PriceBar
 from app.database.session import get_engine
 from tests.integration.conftest import alembic_config
@@ -112,7 +112,9 @@ def test_unknown_timeframe_is_rejected(migrated_engine: Engine) -> None:
 def test_health_is_ok_against_real_database(
     settings: Settings, test_db_url: URL, migrated_engine: Engine
 ) -> None:
-    app.dependency_overrides[get_settings] = lambda: settings
+    # Pin the mode: the local .env may legitimately set TRADING_MODE=paper.
+    disabled = settings.model_copy(update={"trading_mode": TradingMode.DISABLED})
+    app.dependency_overrides[get_settings] = lambda: disabled
     app.dependency_overrides[get_engine] = lambda: migrated_engine
     try:
         resp = TestClient(app).get("/health")
