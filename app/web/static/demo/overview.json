@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "source": "DEMO",
+    "label": "DEMONSTRATION DATA — NOT LIVE MARKET DATA",
+    "illustrative_as_of": "2019-03-15",
+    "note": "Hand-written illustrative values for the interface layout. Not market data, not research results, not account or broker state."
+  },
+  "dataset": {
+    "instrument": "SPY",
+    "instrument_note": "Illustrative instrument: S&P 500 ETF",
+    "timeframe": "Daily, end of day",
+    "period_start": "2014-01-02",
+    "period_end": "2019-03-15",
+    "nature": "A fixed, hand-written example used to lay out the interface. It is not derived from stored data and is never updated."
+  },
+  "snapshot": [
+    {
+      "label": "Illustrative as-of session",
+      "value": "2019-03-15",
+      "kind": "date",
+      "note": "Historical placeholder date"
+    },
+    {
+      "label": "Sessions in sample",
+      "value": 1311,
+      "kind": "integer",
+      "note": "Illustrative count for the period above"
+    },
+    {
+      "label": "Flagged data-quality events",
+      "value": 3,
+      "kind": "integer",
+      "note": "Illustrative count"
+    },
+    {
+      "label": "Missing sessions",
+      "value": null,
+      "kind": "integer",
+      "note": "Deliberately absent: shows how a missing value is displayed"
+    }
+  ],
+  "coverage": [
+    {
+      "area": "Overview",
+      "detail": "Dataset context and demonstration snapshot",
+      "status": "available"
+    },
+    {
+      "area": "Market Analysis",
+      "detail": "Indicators, candlestick and price-action observations, regimes",
+      "status": "available"
+    },
+    {
+      "area": "Research",
+      "detail": "Baseline strategies, backtests and curves (no statistical validation yet)",
+      "status": "available"
+    },
+    {
+      "area": "Data & Operations",
+      "detail": "Data quality, processing history, alerts",
+      "status": "planned"
+    },
+    {
+      "area": "About",
+      "detail": "Purpose, data sources and limitations",
+      "status": "available"
+    }
+  ]
+}

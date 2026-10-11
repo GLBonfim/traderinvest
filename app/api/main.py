@@ -13,9 +13,12 @@ from fastapi import FastAPI, Request, Response
 
 from app import __version__
 from app.api.health import router as health_router
+from app.api.market import router as market_router
+from app.api.research import router as research_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.safety import assert_safe_trading_mode
+from app.web import mount_ui
 
 log = get_logger(__name__)
 
@@ -67,6 +70,9 @@ def create_app() -> FastAPI:
         return response
 
     app.include_router(health_router)
+    app.include_router(market_router)  # read-only GETs for the web UI (ADR-0028)
+    app.include_router(research_router)  # read-only research GETs (ADR-0029)
+    mount_ui(app)  # static, read-only UI at /ui (no data endpoints)
     return app
 
 

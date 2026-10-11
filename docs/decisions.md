@@ -503,6 +503,80 @@ acceptance; they are superseded by a new ADR.
   some cases (sizing on 9,999). Vendor acceptance of LOO for this account is unverified until
   the first submission.
 
+## ADR-0028 — Read-only market API for the web UI
+
+- **Status:** Accepted (2026-10-11, owner approval; frontend phase 3B)
+- **Context:** The static web UI at `/ui` (same origin, CSP `'self'`) needs stored market
+  analysis for its Market Analysis page. Until now the API exposed only `GET /health`, and
+  `tests/unit/test_api.py` pinned that route set.
+- **Decision:**
+  - Exactly two new routes, both `GET`, under `/api/v1/market`: `/summary` (latest closed
+    session: bar, freshness, regimes, indicators with warm-up status, candle observations,
+    price-action structure) and `/series?range=3m|6m|1y|2y|5y` (default `1y`; 63/126/252/504/1,260
+    sessions; closed OHLCV plus SMA 20/50/200, Bollinger, RSI 14 and MACD). SPY only; no symbol,
+    `as_of` or any other parameter (unknown parameters → 422). The route whitelists in the unit
+    tests list these two routes explicitly; nothing else is allowed.
+  - Values come from the existing engines (candles, price action, indicators, regimes) through
+    `app.dashboard.services` on stored closed bars; nothing is re-implemented. Strategies are
+    not run. Prices are raw (dividend-unadjusted) and labelled so; sessions are XNYS dates.
+    NaN/inf become `null`, never 0; `insufficient_data` labels are reported as unavailable.
+  - Point-in-time: only the latest closed session is described (swings with `confirmed_at`,
+    events with `available_at` up to it; the engine's "as of last bar" zones are therefore
+    valid). Indicator series are computed on the full history and sliced (causal engines).
+  - Database access: one `SET TRANSACTION READ ONLY` transaction per request, rolled back at the
+    end (verified: writes rejected inside it; the pooled connection is unaffected afterwards).
+    Errors: database unavailable → 503 with a generic detail (exception type logged only), no
+    stored data → 404, invalid range or parameters → 422; write methods → 405.
+  - Engine outputs are cached in-process per dataset identity (app version, provider, bars,
+    first/last bar, latest `ingested_at`): bounded LRU of 2, thread-safe, one computation per
+    key at a time, failures never cached. A new ingestion changes the key.
+  - Every response carries `meta.source = "LOCAL"` and the label "NOT LIVE · END-OF-DAY
+    RESEARCH DATA"; the UI accepts API data only with that marker and keeps DEMO data separate.
+  - Excluded: any import of broker, paper, operations, alerts, ingestion or data providers
+    (tested); any write, order, account or configuration endpoint; real-time data.
+- **Consequences:** The first request per dataset computes the engines (seconds); later
+  requests are served from the cache. The UI shows stored historical research data, which is
+  still not live market data. Further endpoints require a new ADR.
+
+## ADR-0029 — Read-only research API (strategies, backtests, curves)
+
+- **Status:** Accepted (2026-10-11, owner approval; frontend phase 4B)
+- **Context:** The web UI needs the Phase 7/8 research results. Statistical validation, ML and
+  walk-forward are explicitly out of scope for this step.
+- **Decision:**
+  - Exactly three new routes, all `GET`, under `/api/v1/research`: `/strategies` (fixed baseline
+    rules, versions, features, parameters and the two benchmark definitions), `/backtests?slice=
+    full|early|late` (default `full`; every Phase 8 metric of the six strategies and both buy &
+    hold benchmarks) and `/curves?slice=…&kind=net|gross` (cumulative return and drawdown per
+    series on the shared session axis). SPY only; unknown parameters → 422. The route
+    whitelists list these three routes explicitly.
+  - Results come from the existing backtester `run_suite` with the default `BacktestConfig`
+    (next-session-open execution, generic cost assumptions labelled as such), the slice dates
+    as `start`/`end`; strategies are computed on bars up to the slice end only. Nothing is
+    re-implemented, tuned or ranked: series are listed in a fixed order (strategies, then the
+    price and the total-return benchmark, which are never treated as equivalent).
+  - Slices are the pre-declared Phase 9 date ranges and are reported with `out_of_sample: false`:
+    the baselines are not fitted, so a slice is a descriptive sub-period, not a validation. They
+    are restated in the API module (importing `app.validation` would load the validation engine)
+    and a unit test asserts they equal `DEFAULT_SLICES`.
+  - Gross curves use the same fills with zero costs (the engine's gross equity); their drawdown
+    uses the engine's own drawdown definition. Undefined metrics are `null`, never 0.
+  - Every response carries `meta.source = "LOCAL"`, the dataset key, the backtest and strategy
+    configuration fingerprints, the window, the cost assumptions and when it was computed.
+  - One `SET TRANSACTION READ ONLY` transaction per request, rolled back. Errors as ADR-0028:
+    database unavailable → 503 (generic detail), no stored data or a slice without sessions →
+    404, invalid parameters → 422, write methods → 405.
+  - In-process caches: suites keyed by dataset identity + strategy engine fingerprint + backtest
+    configuration (which contains the slice), bounded LRU of 6; serialized responses derived from
+    a cached suite (keyed additionally by response and curve kind), LRU of 24. Same thread-safety
+    and failure rules as ADR-0028 (one computation per key, failures never cached).
+  - The dashboard research service is not imported (it would load the ML stack); the API uses
+    the same underlying backtest functions, and equivalence with that service is tested. Same
+    excluded imports as ADR-0028.
+- **Consequences:** The first request per slice and dataset runs the full backtest suite
+  (seconds); repeated requests are served from the cache. Validation, ML and walk-forward need
+  further ADRs.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)
