@@ -4,10 +4,12 @@ concurrency and transitions. Every test uses its own temporary directory (never 
 import copy
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -15,7 +17,7 @@ from typing import Any
 import pytest
 
 from app.core.integrity import entry_hash
-from app.operations.lock import PipelineLock
+from app.operations.lock import LockHeldError, LockReleaseError, PipelineLock
 from app.research_runs import registry as rr
 from app.research_runs.registry import (
     NOT_APPLICABLE,
@@ -449,34 +451,84 @@ def test_concurrent_registrations_keep_a_consistent_history(tmp_path: Path) -> N
     assert seqs == list(range(1, 25))  # 12 started + 12 completed, contiguous chain
 
 
-def test_transient_lock_file_sharing_errors_do_not_leave_the_lock_behind(
+def _count_calls(
+    monkeypatch: pytest.MonkeyPatch, name: str, effect: BaseException | None = None
+) -> list[int]:
+    """Counts PipelineLock.<name> calls; raises `effect` instead of running it when given."""
+    real = getattr(PipelineLock, name)
+    calls: list[int] = []
+
+    def wrapper(self: PipelineLock) -> None:
+        calls.append(1)
+        if effect is not None:
+            raise effect
+        real(self)
+
+    monkeypatch.setattr(PipelineLock, name, wrapper)
+    return calls
+
+
+def test_release_is_called_once_and_frees_the_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Windows: the lock file cannot be created while a delete is pending, nor deleted while
-    another process has it open to read its owner. Both are retried, never leaked."""
     reg = make(tmp_path)
-    real_acquire, real_release = PipelineLock.acquire, PipelineLock.release
-    calls = {"acquire": 0, "release": 0}
-
-    def flaky_acquire(self: PipelineLock) -> None:
-        calls["acquire"] += 1
-        if calls["acquire"] == 1:
-            raise PermissionError(13, "delete pending")
-        real_acquire(self)
-
-    def flaky_release(self: PipelineLock) -> None:
-        calls["release"] += 1
-        if calls["release"] <= 2:
-            raise PermissionError(13, "in use by another process")
-        real_release(self)
-
-    monkeypatch.setattr(PipelineLock, "acquire", flaky_acquire)
-    monkeypatch.setattr(PipelineLock, "release", flaky_release)
+    releases = _count_calls(monkeypatch, "release")
     h = start(reg)
-    assert calls == {"acquire": 2, "release": 3}
-    assert not (reg.root / "pipeline.lock").exists()
+    assert len(releases) == 1 and not (reg.root / "pipeline.lock").exists()
     h.write_artifact("a.csv", "x")
-    assert h.publish().status is RunStatus.COMPLETE
+    assert h.publish().status is RunStatus.COMPLETE and len(releases) == 2
+
+
+def test_release_failure_is_reported_once_and_the_lock_stays_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PipelineLock.release() has its own bounded retry; the registry calls it once, reports a
+    RegistryError carrying the LockReleaseError, and never deletes the unreleased lock."""
+    reg = make(tmp_path, lock_timeout=0.3)
+    failure = LockReleaseError(13, "pipeline lock could not be removed")
+    releases = _count_calls(monkeypatch, "release", failure)
+    t0 = time.monotonic()
+    with pytest.raises(RegistryError, match="still held by this process") as info:
+        start(reg)
+    assert time.monotonic() - t0 < 2 and len(releases) == 1  # no outer retry loop
+    assert info.value.__cause__ is failure and not isinstance(info.value, RegistryBusyError)
+    monkeypatch.undo()
+    lock_file = reg.root / "pipeline.lock"
+    owner = json.loads(lock_file.read_text(encoding="utf-8"))
+    assert owner["pid"] == os.getpid() and owner["purpose"] == "research-run-registry"
+    [rec] = reg.records()  # the write under the lock happened; the run is never complete
+    assert rec.status is RunStatus.INCOMPLETE
+    with pytest.raises(RegistryBusyError):  # coherent: still held, so other writers wait
+        start(reg)
+    assert PipelineLock(reg.root).force_release() == owner  # explicit operator action
+    assert publish(reg).status is RunStatus.COMPLETE
+
+
+def test_busy_lock_is_classified_as_contention(tmp_path: Path) -> None:
+    reg = make(tmp_path, lock_timeout=0.3)
+    reg.root.mkdir(parents=True)
+    holder = PipelineLock(reg.root, purpose="test-holder")
+    holder.acquire()
+    try:
+        with pytest.raises(RegistryBusyError, match="registry lock busy") as info:
+            start(reg)
+        assert isinstance(info.value.__cause__, LockHeldError)
+    finally:
+        holder.release()
+
+
+def test_real_permission_error_is_not_reported_as_contention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reg = make(tmp_path, lock_timeout=5)
+    denied = PermissionError(13, "access denied")
+    acquires = _count_calls(monkeypatch, "acquire", denied)
+    t0 = time.monotonic()
+    with pytest.raises(PermissionError) as info:
+        start(reg)
+    assert info.value is denied and not isinstance(info.value, RegistryError)
+    assert len(acquires) == 1 and time.monotonic() - t0 < 1  # not retried until the timeout
+    assert not reg.index_path.exists() and not (reg.root / "pipeline.lock").exists()
 
 
 def test_concurrent_processes_keep_a_consistent_history(tmp_path: Path) -> None:

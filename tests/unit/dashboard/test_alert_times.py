@@ -7,6 +7,7 @@ import textwrap
 from datetime import date
 
 import pandas as pd
+import pytest
 
 from app.dashboard.config import REPO_ROOT
 from app.dashboard.services import alerts as alerts_svc
@@ -56,3 +57,58 @@ def test_no_format_inferring_parse_of_occurred_at_in_the_dashboard() -> None:
             ):
                 offenders.append(f"{path.name}:{node.lineno}")
     assert offenders == []
+
+
+# ── M2: start and end together are evaluated on one index (no reindexing warning) ──
+
+# NY dates: 2026-10-08, 2026-10-09 (x2), 2026-10-10, 2026-10-11
+BOUNDS = pd.DataFrame(
+    {
+        "alert_id": list("abcdef"),
+        "severity": ["WARNING", "INFO", "WARNING", "CRITICAL", "WARNING", "INFO"],
+        "occurred_at": [
+            "2026-10-08T15:00:00+00:00",
+            "2026-10-09T14:00:00.250+00:00",
+            "2026-10-09T23:30:00Z",  # 19:30 NY, still 10-09
+            "2026-10-10T03:59:59.999999+00:00",  # 23:59:59 NY on 10-09
+            "2026-10-10T04:00:00+00:00",  # 00:00 NY on 10-10
+            "2026-10-11T12:00:00+00:00",
+        ],
+    }
+)
+
+
+@pytest.mark.filterwarnings("error::UserWarning")
+def test_start_and_end_both_exclude_rows_bounds_inclusive_without_warning() -> None:
+    out = alerts_svc.filter_alerts(BOUNDS, start=date(2026, 10, 9), end=date(2026, 10, 10))
+    assert list(out["alert_id"]) == ["b", "c", "d", "e"]  # a (before) and f (after) excluded
+    assert list(out.index) == [0, 1, 2, 3]
+
+
+@pytest.mark.filterwarnings("error::UserWarning")
+def test_date_filter_after_severity_filter_non_contiguous_index() -> None:
+    out = alerts_svc.filter_alerts(
+        BOUNDS, severities=["WARNING", "CRITICAL"], start=date(2026, 10, 9), end=date(2026, 10, 9)
+    )
+    assert list(out["alert_id"]) == ["c", "d"]  # rows 2 and 3 of the severity-filtered view
+
+
+@pytest.mark.filterwarnings("error::UserWarning")
+def test_date_filters_with_empty_results() -> None:
+    assert alerts_svc.filter_alerts(BOUNDS, start=date(2026, 10, 12)).empty
+    assert alerts_svc.filter_alerts(BOUNDS, end=date(2026, 10, 7)).empty
+    assert alerts_svc.filter_alerts(BOUNDS, start=date(2026, 10, 11), end=date(2026, 10, 9)).empty
+    empty = alerts_svc.filter_alerts(
+        BOUNDS, severities=["DEBUG"], start=date(2026, 10, 9), end=date(2026, 10, 10)
+    )
+    assert empty.empty and list(empty.columns) == list(BOUNDS.columns)
+
+
+@pytest.mark.filterwarnings("error::UserWarning")
+def test_single_bound_results_unchanged() -> None:
+    assert list(alerts_svc.filter_alerts(BOUNDS, start=date(2026, 10, 10))["alert_id"]) == [
+        "e",
+        "f",
+    ]
+    assert list(alerts_svc.filter_alerts(BOUNDS, end=date(2026, 10, 9))["alert_id"]) == list("abcd")
+    assert list(alerts_svc.filter_alerts(BOUNDS)["alert_id"]) == list("abcdef")

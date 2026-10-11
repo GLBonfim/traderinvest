@@ -268,9 +268,16 @@ class PipelineLock:
         """Operator action after verifying the owner is gone. Returns the removed owner."""
         if not self.path.parent.is_dir():
             return None
-        with _os_mutex(self.mutex_path, MUTEX_TIMEOUT_S):
-            owner = self.owner()
-            _retry_sharing(lambda: self.path.unlink(missing_ok=True))
+        try:
+            with _os_mutex(self.mutex_path, MUTEX_TIMEOUT_S):
+                owner = self.owner()
+                _retry_sharing(lambda: self.path.unlink(missing_ok=True))
+        except _MutexTimeoutError:
+            raise LockReleaseError(
+                errno.EBUSY,
+                f"pipeline lock mutex not acquired within {MUTEX_TIMEOUT_S} s; "
+                f"force release not performed, lock left unchanged: {self.path}",
+            ) from None
         return owner
 
     def __enter__(self) -> "PipelineLock":

@@ -334,18 +334,18 @@ def _process_lock(root: Path) -> threading.Lock:
         return _PROCESS_LOCKS.setdefault(key, threading.Lock())
 
 
-def _release(lock: Any, attempts: int = 100) -> None:
-    """Releases the file lock, retrying while another process briefly has it open (Windows)."""
-    for n in range(attempts):
-        try:
-            lock.release()
-            return
-        except PermissionError as exc:
-            if n == attempts - 1:
-                raise RegistryError(
-                    f"registry lock file could not be removed: {lock.path}"
-                ) from exc
-            time.sleep(0.02)
+def _release(lock: Any) -> None:
+    """Releases the file lock once: PipelineLock.release() already retries transient sharing
+    errors within its own bound. If it still fails, the lock stays held by this process (it is
+    never deleted unconfirmed); it becomes breakable as stale when this process exits."""
+    from app.operations.lock import LockReleaseError
+
+    try:
+        lock.release()
+    except LockReleaseError as exc:
+        raise RegistryError(
+            f"registry lock could not be released and is still held by this process: {exc}"
+        ) from exc
 
 
 class RunRegistry:
@@ -515,7 +515,7 @@ class RunRegistry:
                 try:
                     lock.acquire()
                     break
-                except (LockHeldError, PermissionError) as exc:  # PermissionError: delete pending
+                except LockHeldError as exc:  # contention only; other OS errors propagate as is
                     if time.monotonic() >= deadline:
                         raise RegistryBusyError(f"registry lock busy: {exc}") from exc
                     time.sleep(0.02)

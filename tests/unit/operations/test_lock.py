@@ -589,3 +589,37 @@ def test_exclusive_reader_only_delays_release(tmp_path: Path) -> None:
     lock.release()
     assert 0.1 < time.monotonic() - t0 < lock_mod.RETRY_TIMEOUT_S
     assert not lock.held and not lock.path.exists()
+
+
+# ── B1: force_release() with the mutex busy raises the public error and changes nothing ──
+
+
+def test_force_release_with_busy_mutex_raises_public_error_and_keeps_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(lock_mod, "MUTEX_TIMEOUT_S", 0.2)
+    holder = PipelineLock(tmp_path, purpose="test-holder")
+    holder.acquire()
+    before = holder.path.read_bytes()
+    entered, leave = threading.Event(), threading.Event()
+
+    def wedge() -> None:
+        with lock_mod._os_mutex(holder.mutex_path, 5):
+            entered.set()
+            leave.wait(5)
+
+    t = threading.Thread(target=wedge)
+    t.start()
+    entered.wait(5)
+    try:
+        with pytest.raises(LockReleaseError, match=r"mutex not acquired within 0.2 s") as info:
+            PipelineLock(tmp_path).force_release()
+        assert "force release not performed" in str(info.value)
+        assert not isinstance(info.value, lock_mod._MutexTimeoutError)
+        assert holder.path.read_bytes() == before and holder.mutex_path.exists()
+    finally:
+        leave.set()
+        t.join()
+    removed = PipelineLock(tmp_path).force_release()  # mutex free again: works as before
+    assert removed is not None and removed["lock_id"] == holder.lock_id
+    assert not holder.path.exists()

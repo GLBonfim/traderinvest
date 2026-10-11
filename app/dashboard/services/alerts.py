@@ -87,11 +87,14 @@ def filter_alerts(
     if account:
         out = out[out["account_id"] == account]
     if start or end:
+        # both bounds (inclusive) are evaluated on the same index, then applied once
         day = alert_times(out["occurred_at"]).dt.tz_convert("America/New_York").dt.date
+        keep = pd.Series(True, index=out.index)
         if start:
-            out = out[day >= start]
+            keep &= day >= start
         if end:
-            out = out[day <= end]
+            keep &= day <= end
+        out = out[keep]
     return out.reset_index(drop=True)
 
 
