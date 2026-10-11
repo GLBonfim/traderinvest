@@ -605,6 +605,28 @@ acceptance; they are superseded by a new ADR.
   Windows; `rename` is atomic only on one volume (staging and runs share the root); INCOMPLETE
   does not distinguish "running" from "interrupted"; `git_dirty` counts untracked files.
 
+## ADR-0031 — Recorded statistical-validation runs (`record` / `verify`)
+
+- **Status:** Accepted (2026-10-11, owner approval; Phase 5D). Supersedes, for recorded runs
+  only, the "outputs ephemeral" clause of ADR-0018; the ADR-0018 methodology is unchanged.
+- **Decision:**
+  - `python -m app.validation.cli record --symbol SPY --registry DIR` runs the existing
+    `Validator` with the fixed `ValidationConfig` and records a `validation` run (ADR-0030):
+    the five `ValidationReport.frames()` tables as CSV plus `summary.json`. `--registry` is
+    required (no implicit location). The existing `run` subcommand is unchanged.
+  - Bars and the dataset identity are read in one `SET TRANSACTION READ ONLY` transaction,
+    rolled back. Inputs are checked before anything is registered; an engine or write error
+    records the run as failed; a database error prints only the exception type.
+  - `verify --registry DIR [--run-id ID]` only reads and re-checks history, manifest and
+    hashes. Exit codes: 0 complete; 1 run not complete; 2 invalid input; 3 registry refused or
+    unavailable (busy, corrupt, other registry or file-system error); 4 data unavailable.
+  - One job per invocation, synchronous, only when invoked: no startup hook, schedule or HTTP
+    route. The data fingerprint is the SHA-256 of the OHLCV + adj_close content and index (method
+    recorded in the manifest).
+- **Consequences:** The first real run (2026-10-11) is reproducible from its manifest, but it was
+  recorded on a dirty tree (commit 144c593); later runs identify their code by commit. Reading
+  recorded runs through the API needs a further ADR.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

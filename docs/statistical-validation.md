@@ -234,3 +234,29 @@ resamples), of which bootstrap ≈ 11.5 s, backtests ≈ 13.7 s, strategy featur
   known alternative, not implemented).
 - Costs remain generic assumptions; scenario D is not "the" true cost.
 - Dividends are not credited to timing strategies (Phase 8 convention, unchanged).
+
+## Recorded runs (research run registry)
+
+An explicit command runs the same `Validator` with the same fixed `ValidationConfig` and records
+the result in the research run registry (`app/research_runs/`). Nothing runs it automatically
+(no startup hook, schedule or HTTP route).
+
+```
+uv run python -m app.validation.cli record --symbol SPY --registry data/research_runs
+uv run python -m app.validation.cli verify --registry data/research_runs [--run-id ID]
+```
+
+- `--registry` is required (no implicit location); `data/` is git-ignored. Bars and the
+  dataset identity are read from the local database in one READ ONLY transaction.
+- A published run is `runs/<run_id>/` with `intervals.csv`, `comparisons.csv`,
+  `cost_sensitivity.csv`, `redundancy.csv`, `concentration.csv`, `summary.json` and the manifest
+  `run.json` (config, data and dataset fingerprints, git commit and dirty state, parameters,
+  start/end times, size and SHA-256 of every artifact). Unknown values are recorded as
+  `unknown`, never guessed.
+- The run is complete only when every artifact was verified and the `completed` event is in the
+  hash-chained history (`index.jsonl`); an error records it as `failed` and earlier runs are
+  never touched. `verify` (read-only) re-checks the history, the manifest and every hash; exit
+  code 0 means complete.
+- One job per invocation, synchronously. Do not start several `record` commands at once: the
+  registry serialises its own writes, but the underlying `PipelineLock` (`app/operations/lock.py`)
+  has a known Windows race under concurrent contenders, so concurrent writers are not supported.
