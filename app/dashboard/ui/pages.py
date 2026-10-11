@@ -1007,7 +1007,7 @@ def alerts_monitoring(ctx: Context) -> None:
     acct = f[3].selectbox(
         "Account", ["(all)", *sorted(alerts["account_id"].dropna().unique())], key="al_acct"
     )
-    days = pd.to_datetime(alerts["occurred_at"], utc=True)
+    days = alerts_svc.alert_times(alerts["occurred_at"])
     rng = f[4].date_input(
         "Date range", value=(days.min().date(), days.max().date()), key="al_range"
     )

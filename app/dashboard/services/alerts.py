@@ -61,6 +61,12 @@ def load_alerts(root: Path = DEFAULT_ALERTS_ROOT) -> tuple[pd.DataFrame, dict[st
     return alerts.iloc[::-1].reset_index(drop=True), store.metrics()
 
 
+def alert_times(values: pd.Series) -> pd.Series:
+    """`occurred_at` strings -> UTC timestamps. Stored values mix ISO-8601 variants (with and
+    without fractional seconds), so the format must not be inferred from the first value."""
+    return pd.to_datetime(values, utc=True, format="ISO8601")
+
+
 def filter_alerts(
     alerts: pd.DataFrame,
     *,
@@ -81,7 +87,7 @@ def filter_alerts(
     if account:
         out = out[out["account_id"] == account]
     if start or end:
-        day = pd.to_datetime(out["occurred_at"], utc=True).dt.tz_convert("America/New_York").dt.date
+        day = alert_times(out["occurred_at"]).dt.tz_convert("America/New_York").dt.date
         if start:
             out = out[day >= start]
         if end:
