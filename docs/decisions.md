@@ -577,6 +577,34 @@ acceptance; they are superseded by a new ADR.
   (seconds); repeated requests are served from the cache. Validation, ML and walk-forward need
   further ADRs.
 
+## ADR-0030 — Persistent registry of offline research runs
+
+- **Status:** Accepted (2026-10-11, owner approval; Phase 5C)
+- **Context:** Statistical validation and ML runs are computed offline and explicitly (Phase 5A,
+  option B); their results must be stored so they can be read later without recomputation, and
+  a reader must never mistake a partial, failed or altered run for a complete one.
+- **Decision:**
+  - `app/research_runs/registry.py`, a file registry under a caller-given root (git-ignored
+    `data/` in practice): `index.jsonl` (append-only, hash-chained history reusing the alert
+    store chain format), `staging/<run_id>/` while writing, `runs/<run_id>/` once published.
+  - Run ids `{validation|ml}-<UTC timestamp>-<8 hex>`. Manifest `run.json`, format version 1:
+    kind, start/end, config / data / dataset fingerprints as explicit `known | unknown |
+    not_applicable` values (never guessed), app version, git commit and dirty state, parameters,
+    and size + SHA-256 of every artifact.
+  - Publication: artifacts written atomically to staging, manifest validated and written, hashes
+    re-checked, staging renamed to `runs/`, then a `completed` event carrying the manifest
+    SHA-256. COMPLETE requires that event, a matching manifest hash and every artifact matching;
+    otherwise INTEGRITY_FAILED, FAILED (a `failed` event) or INCOMPLETE (no terminal event, also
+    when a published directory lacks its `completed` event). Readers never write; writers refuse
+    a corrupt history; invalid transitions are rejected against the history.
+  - The hash-chain and atomic-write primitives move unchanged to `app/core/integrity.py`
+    (on-disk format byte-identical; the alert, broker and operations stores keep their names).
+  - Nothing is deleted automatically: failed staging is kept for diagnosis and unregistered
+    directories are only reported.
+- **Consequences:** Results are verifiable and attributable. Limits: no directory fsync on
+  Windows; `rename` is atomic only on one volume (staging and runs share the root); INCOMPLETE
+  does not distinguish "running" from "interrupted"; `git_dirty` counts untracked files.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)
