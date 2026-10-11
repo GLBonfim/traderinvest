@@ -627,6 +627,29 @@ acceptance; they are superseded by a new ADR.
   recorded on a dirty tree (commit 144c593); later runs identify their code by commit. Reading
   recorded runs through the API needs a further ADR.
 
+## ADR-0032 — PipelineLock serialised by an OS mutex
+
+- **Status:** Accepted (2026-10-11, owner approval; Phase 5E). Refines the lock mechanism of
+  ADR-0024; its semantics (owner file, automatic break only for a verified-dead local process,
+  operator `unlock --force`) are unchanged.
+- **Context:** On Windows a file cannot be deleted while another handle has it open: a contender
+  reading the owner made `release()` fail and left a lock that could not be broken (its process
+  was alive); concurrent stale-lock breaking also had a check-then-act window.
+- **Decision:**
+  - Acquire, stale-break, release and force-release run their short check-then-act sections
+    under an exclusive OS lock (`msvcrt.locking` / `fcntl.flock`) on the persistent, never
+    deleted `pipeline.lock.mutex` (the OS drops it if the process dies). Readers (`owner()`) do
+    not take it.
+  - Transient sharing errors are retried within a bound (2 s); waiting for the mutex is bounded
+    (10 s, then `LockHeldError` / `LockReleaseError`). `LockReleaseError` (a `PermissionError`)
+    leaves the lock held so `release()` can be retried; a lock whose owner cannot be read or
+    confirmed is never deleted by `release()`; a failed owner write removes the new lock file.
+  - No new dependency; public names unchanged.
+- **Consequences:** Tested with concurrent threads and processes on Windows (no overlap, no
+  abandoned lock, valid hash chains). Each lock root now contains an empty
+  `pipeline.lock.mutex`. A program holding `pipeline.lock` open beyond the bound makes
+  `release()` raise instead of hanging.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

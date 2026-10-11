@@ -257,6 +257,10 @@ uv run python -m app.validation.cli verify --registry data/research_runs [--run-
   hash-chained history (`index.jsonl`); an error records it as `failed` and earlier runs are
   never touched. `verify` (read-only) re-checks the history, the manifest and every hash; exit
   code 0 means complete.
-- One job per invocation, synchronously. Do not start several `record` commands at once: the
-  registry serialises its own writes, but the underlying `PipelineLock` (`app/operations/lock.py`)
-  has a known Windows race under concurrent contenders, so concurrent writers are not supported.
+- One job per invocation, synchronously; run one `record` at a time. Registry writes are
+  serialised by `PipelineLock` (`app/operations/lock.py`, ADR-0032): its check-then-act sections
+  run under an OS mutex, so threads and processes cannot hold the lock together, and transient
+  Windows sharing errors are retried within a bound (tested with concurrent threads and
+  processes on Windows). Writes are serialised, the validation computations are not: two
+  concurrent `record` commands would each compute and publish a separate run, which is not the
+  intended workflow.
