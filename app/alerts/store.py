@@ -11,15 +11,14 @@ dashboard or restarting never stores an alert twice. Corrupt files raise `AlertS
 nothing is repaired or rewritten.
 """
 
-import hashlib
 import json
-import os
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 from typing import Any
 
 from app.alerts.models import SEVERITIES, AlertEvent
+from app.core.integrity import HashChain, atomic_write, canonical_json, entry_hash
 
 STORE_SCHEMA_VERSION = 1
 
@@ -28,59 +27,17 @@ class AlertStoreError(RuntimeError):
     """The alert store is corrupt or incompatible; nothing was modified."""
 
 
-def _canonical(obj: Any) -> str:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), allow_nan=False, default=str)
+# The integrity primitives now live in `app.core.integrity` (unchanged algorithms and format);
+# these names are kept because the broker and operations stores import them from here.
+_canonical = canonical_json
+_hash = entry_hash
+_atomic_write = atomic_write
 
 
-def _hash(entry: dict[str, Any]) -> str:
-    return hashlib.sha256(
-        _canonical({k: v for k, v in entry.items() if k != "hash"}).encode()
-    ).hexdigest()
-
-
-def _atomic_write(path: Path, text: str) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(text)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
-
-
-class _Chain:
+class _Chain(HashChain):
     """Append-only JSONL file with a SHA-256 chain (seq, prev_hash, hash)."""
 
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self.entries: list[dict[str, Any]] = []
-        if path.exists():
-            prev = ""
-            with open(path, encoding="utf-8") as fh:
-                for n, line in enumerate(fh, start=1):
-                    try:
-                        e = json.loads(line)
-                    except json.JSONDecodeError as exc:
-                        raise AlertStoreError(f"{path.name} line {n} is not valid JSON") from exc
-                    if e.get("seq") != n or e.get("prev_hash") != prev or e.get("hash") != _hash(e):
-                        raise AlertStoreError(f"{path.name} line {n}: hash chain broken")
-                    prev = e["hash"]
-                    self.entries.append(e)
-
-    def append(self, bodies: list[dict[str, Any]]) -> None:
-        if not bodies:
-            return
-        prev = self.entries[-1]["hash"] if self.entries else ""
-        new: list[dict[str, Any]] = []
-        for b in bodies:
-            e = {"seq": len(self.entries) + len(new) + 1, **b, "prev_hash": prev}
-            e["hash"] = _hash(e)
-            new.append(e)
-            prev = e["hash"]
-        with open(self.path, "a", encoding="utf-8", newline="\n") as fh:
-            fh.write("".join(_canonical(e) + "\n" for e in new))
-            fh.flush()
-            os.fsync(fh.fileno())
-        self.entries += new
+    error = AlertStoreError
 
 
 class AlertStore:
