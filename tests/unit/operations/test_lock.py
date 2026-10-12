@@ -623,3 +623,90 @@ def test_force_release_with_busy_mutex_raises_public_error_and_keeps_the_lock(
     removed = PipelineLock(tmp_path).force_release()  # mutex free again: works as before
     assert removed is not None and removed["lock_id"] == holder.lock_id
     assert not holder.path.exists()
+
+
+# ── Phase 6, B2: a failed os.fdopen closes the descriptor exactly once ──
+
+
+def test_failed_fdopen_closes_the_descriptor_once_and_leaves_no_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_close = os.close
+    seen: dict[str, Any] = {"fd": None, "closes": 0}
+
+    def failing_fdopen(fd: int, *a: Any, **k: Any) -> Any:
+        seen["fd"] = fd
+        raise OSError(24, "too many open files (injected)")
+
+    def counting_close(fd: int) -> None:
+        if fd == seen["fd"]:
+            seen["closes"] += 1
+        real_close(fd)
+
+    monkeypatch.setattr(os, "fdopen", failing_fdopen)
+    monkeypatch.setattr(os, "close", counting_close)
+    lock = PipelineLock(tmp_path)
+    with pytest.raises(OSError, match="injected"):
+        lock.acquire()
+    monkeypatch.undo()
+    assert seen["fd"] is not None and seen["closes"] == 1  # closed exactly once
+    assert not lock.held and not lock.path.exists()  # our empty lock file was removed
+    lock.acquire()  # nothing was left behind
+    lock.release()
+
+
+def test_failed_fdopen_cannot_touch_a_lock_owned_by_someone_else(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    foreign = {"lock_id": "other", "pid": os.getpid(), "host": "other-host"}
+    (tmp_path / "pipeline.lock").write_text(json.dumps(foreign), encoding="utf-8")
+    calls: list[int] = []
+
+    def failing_fdopen(fd: int, *a: Any, **k: Any) -> Any:
+        calls.append(fd)
+        raise OSError("must not be reached")
+
+    monkeypatch.setattr(os, "fdopen", failing_fdopen)
+    with pytest.raises(LockHeldError) as info:
+        PipelineLock(tmp_path).acquire()
+    assert calls == [] and info.value.owner == foreign  # O_EXCL failed first: fdopen never ran
+    assert json.loads((tmp_path / "pipeline.lock").read_text(encoding="utf-8")) == foreign
+
+
+# ── Phase 6, B7: a mutex timeout is not evidence that the lock is held ──
+
+
+def test_mutex_timeout_is_distinguished_from_a_held_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(lock_mod, "MUTEX_TIMEOUT_S", 0.2)
+    entered, leave = threading.Event(), threading.Event()
+
+    def wedge() -> None:
+        with lock_mod._os_mutex(tmp_path / "pipeline.lock.mutex", 5):
+            entered.set()
+            leave.wait(5)
+
+    t = threading.Thread(target=wedge)
+    t.start()
+    entered.wait(5)
+    try:
+        with pytest.raises(lock_mod.LockMutexTimeoutError) as info:
+            PipelineLock(tmp_path).acquire()
+        assert isinstance(info.value, LockHeldError)  # existing callers: "not acquired"
+        assert "could not be checked" in str(info.value) and "held by" not in str(info.value)
+        assert info.value.owner == {} and not (tmp_path / "pipeline.lock").exists()
+    finally:
+        leave.set()
+        t.join()
+    holder = PipelineLock(tmp_path)
+    holder.acquire()
+    with pytest.raises(LockHeldError) as held:  # a really held lock: the plain error
+        PipelineLock(tmp_path).acquire()
+    assert not isinstance(held.value, lock_mod.LockMutexTimeoutError)
+    assert held.value.owner["lock_id"] == holder.lock_id and "held by" in str(held.value)
+    holder.release()
+    again = PipelineLock(tmp_path)
+    again.acquire()  # release then re-acquire
+    again.release()
+    assert not (tmp_path / "pipeline.lock").exists()

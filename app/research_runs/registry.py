@@ -414,11 +414,21 @@ class RunRegistry:
                     )
                 )
             elif t["event"] == "failed":
+                # A failure recorded after the staging directory was already renamed into runs/
+                # (e.g. the completed event could not be appended): the run stays FAILED, its
+                # files are kept for diagnosis and the situation is reported explicitly.
+                failed_problems: tuple[str, ...] = ()
+                if (self.published / run_id).exists():
+                    failed_problems = (
+                        "published directory present although the run failed "
+                        "(kept for diagnosis; not a complete run)",
+                    )
                 out.append(
                     RunRecord(
-                        run_id, s["kind"], RunStatus.FAILED, s["at"], t["at"], None, t["reason"]
+                        run_id, s["kind"], RunStatus.FAILED, s["at"], t["at"], None, t["reason"],
+                        failed_problems,
                     )
-                )
+                )  # fmt: skip
             else:
                 manifest, issues = self._verify(run_id, s, t["manifest_sha256"])
                 status = RunStatus.COMPLETE if not issues else RunStatus.INTEGRITY_FAILED
@@ -471,6 +481,11 @@ class RunRegistry:
     ) -> tuple[RunManifest | None, tuple[str, ...]]:
         d = self.published / run_id
         mpath = d / MANIFEST
+        # Only regular files and a regular directory count; links are never followed.
+        if d.is_symlink() or (d.exists() and not d.is_dir()):
+            return None, ("published run path is not a regular directory",)
+        if mpath.is_symlink() or (mpath.exists() and not mpath.is_file()):
+            return None, ("published manifest is not a regular file",)
         if not mpath.is_file():
             return None, ("published manifest missing",)
         problems: list[str] = []
@@ -488,7 +503,9 @@ class RunRegistry:
         problems += [f"unexpected file: {n}" for n in sorted(present - set(expected))]
         for n in sorted(set(expected) & present):
             p, a = d / n, expected[n]
-            if p.stat().st_size != a.bytes or sha256_file(p) != a.sha256:
+            if p.is_symlink() or not p.is_file():  # a directory, link or other non-regular entry
+                problems.append(f"artifact not a regular file: {n}")
+            elif p.stat().st_size != a.bytes or sha256_file(p) != a.sha256:
                 problems.append(f"artifact altered: {n}")
         missing_required = sorted(set(started.get("required_artifacts", [])) - set(expected))
         problems += [f"required artifact not recorded: {n}" for n in missing_required]

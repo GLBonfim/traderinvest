@@ -680,3 +680,34 @@ def test_cli_unusable_registry_location_is_a_registry_error(
     target = tmp_path / "file" / "registry"  # parent is a file: cannot be created
     assert cli.main(["record", "--symbol", "SPY", "--registry", str(target)]) == cli.EXIT_REGISTRY
     assert "registry unavailable (nothing published)" in capsys.readouterr().err
+
+
+# ── Phase 6, B6 through the validation integration ──
+
+
+def test_record_failure_after_publication_is_failed_and_files_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reg = registry(tmp_path)
+    original = reg._append
+
+    def crash(body: dict[str, Any]) -> None:
+        if body["event"] == "completed":
+            raise OSError("cannot append the completed event (injected)")
+        original(body)
+
+    monkeypatch.setattr(reg, "_append", crash)
+    with pytest.raises(rv.ValidationRunError) as info:
+        record(reg)
+    monkeypatch.undo()
+    err = info.value
+    assert err.record is not None and err.record.status is RunStatus.FAILED
+    assert any(
+        "published directory present although the run failed" in p for p in err.record.problems
+    )
+    assert sorted(p.name for p in (reg.published / err.run_id).iterdir()) == sorted(
+        (*rv.ARTIFACTS, rr.MANIFEST)
+    )
+    with pytest.raises(LookupError, match="failed"):
+        rv.load_validation_run(reg, err.run_id)
+    assert cli.main(["verify", "--registry", str(reg.root), "--run-id", err.run_id]) == cli.EXIT_RUN

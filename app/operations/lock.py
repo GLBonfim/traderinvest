@@ -81,6 +81,22 @@ class LockHeldError(RuntimeError):
         self.owner = owner
 
 
+class LockMutexTimeoutError(LockHeldError):
+    """The lock state could not be checked: the short OS mutex guarding it was not acquired
+    within MUTEX_TIMEOUT_S. This is NOT evidence that another pipeline holds the lock file;
+    `owner` is only the best-effort content of the lock file at that moment (may be empty).
+    A subclass of LockHeldError so that existing callers still treat it as "not acquired"."""
+
+    def __init__(self, owner: dict[str, Any], timeout_s: float) -> None:
+        RuntimeError.__init__(
+            self,
+            f"pipeline lock mutex not acquired within {timeout_s} s; the lock state could not "
+            "be checked (another contender may be inside its short critical section)",
+        )
+        self.owner = owner
+        self.timeout_s = timeout_s
+
+
 class LockReleaseError(PermissionError):
     """The lock file could not be removed within the retry bound (e.g. another program keeps
     it open). The lock is still held by this instance; `release()` may be called again."""
@@ -208,7 +224,7 @@ class PipelineLock:
             with _os_mutex(self.mutex_path, MUTEX_TIMEOUT_S):
                 self._acquire_guarded()
         except _MutexTimeoutError:
-            raise LockHeldError(self.owner() or {"unreadable": True}) from None
+            raise LockMutexTimeoutError(self.owner() or {}, MUTEX_TIMEOUT_S) from None
 
     def _acquire_guarded(self) -> None:
         for _ in range(2):
@@ -232,8 +248,16 @@ class PipelineLock:
                 "acquired_at": datetime.now(UTC).isoformat(),
                 "purpose": self.purpose,
             }
+            # The file was just created by us under the mutex (O_EXCL), so on any failure below
+            # removing it can only remove our own, still-empty lock file.
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh = os.fdopen(fd, "w", encoding="utf-8")
+            except BaseException:
+                os.close(fd)  # fdopen did not take ownership: close the descriptor exactly once
+                _retry_sharing(lambda: self.path.unlink(missing_ok=True))
+                raise
+            try:
+                with fh:  # owns the descriptor from here on; closing it closes fd
                     fh.write(json.dumps(info))
                     fh.flush()
                     os.fsync(fh.fileno())

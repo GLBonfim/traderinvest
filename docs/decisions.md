@@ -650,6 +650,33 @@ acceptance; they are superseded by a new ADR.
   `pipeline.lock.mutex`. A program holding `pipeline.lock` open beyond the bound makes
   `release()` raise instead of hanging.
 
+## ADR-0033 — Scheduler failure policy
+
+- **Status:** Accepted (2026-10-12, owner approval; Phase 6). Refines the scheduler part of
+  ADR-0024; the pipeline's own stage failure policy is unchanged.
+- **Context:** The pipeline turns stage failures into results, but an exception raised outside
+  the stages (store, lock release, an unexpected bug) propagated out of `Scheduler.tick()` and
+  silently ended the long-running scheduler.
+- **Decision:**
+  - `tick()` catches `Exception` only from a scheduled run; `KeyboardInterrupt`, `SystemExit`
+    and other control exceptions always propagate (Ctrl+C still stops the loop).
+  - A failed run is logged once (`operations.scheduled_run_failed`; single line, URL
+    credentials masked, at most 300 characters) and written to the heartbeat:
+    `last_run_status = RUN_ERROR`, `last_error`, `consecutive_failures`, `retry_not_before`.
+    It is never reported as a successful or no-op run.
+  - Continue only when safe: ordinary failures keep the scheduler polling, but it does not try
+    again before `poll × 2^(n−1)` seconds (capped at 1 h); a successful run resets the count.
+    It **halts** after 3 consecutive failed runs, or immediately on `LockReleaseError` or
+    `OpsStoreError`, whose lock or store state is uncertain; `ops status` then reports
+    `halted: …` until an operator restarts it.
+  - Locks: released by the pipeline's own `finally`; the scheduler never touches the lock.
+  - Lock contention vs uncertainty: an OS-mutex timeout is `LockMutexTimeoutError` (a
+    `LockHeldError` subclass): the run is still `LOCKED`, but the alert says the lock could not
+    be checked instead of claiming that another pipeline holds it.
+- **Consequences:** A transient fault no longer stops daily operations silently, and a
+  persistent one cannot loop: at most 3 attempts with growing spacing, then a visible halt.
+  Restarting a halted scheduler is a deliberate operator action.
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)

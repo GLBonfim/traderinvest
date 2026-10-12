@@ -10,6 +10,7 @@ No OS scheduler, service, cron, APScheduler, Celery or Redis is installed or con
 """
 
 import os
+import re
 import socket
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,10 +22,25 @@ from app.data.calendar import TradingCalendar
 from app.operations import models as m
 from app.operations import sessions as cal_
 from app.operations.config import OperationsConfig
+from app.operations.lock import LockReleaseError
 from app.operations.pipeline import Pipeline
-from app.operations.store import OpsStore
+from app.operations.store import OpsStore, OpsStoreError
 
 log = get_logger("operations.scheduler")
+
+# Failure policy (ADR-0033). The pipeline already turns stage failures into results; an
+# exception reaching the scheduler means something outside the stages went wrong.
+RUN_ERROR = "RUN_ERROR"  # tick/heartbeat status of a scheduled run that raised
+MAX_CONSECUTIVE_FAILURES = 3  # halt after this many failed runs in a row
+FAILURE_BACKOFF_CAP_S = 3600  # retry delay: poll * 2**(n-1) seconds, capped
+# Errors after which continuing is not safe: lock state or operations store uncertain.
+FATAL_ERRORS: tuple[type[BaseException], ...] = (LockReleaseError, OpsStoreError)
+
+
+def safe_error(exc: BaseException) -> str:
+    """Single line, credentials in URLs masked, bounded length."""
+    msg = re.sub(r"://[^/@\s]*@", "://***@", " ".join(str(exc).split()))
+    return f"{type(exc).__name__}: {msg}"[:300]
 
 
 @dataclass
@@ -34,6 +50,7 @@ class TickResult:
     reason: str
     run_status: str | None = None
     next_check: str = ""
+    error: str | None = None
 
 
 class Scheduler:
@@ -56,6 +73,10 @@ class Scheduler:
         self.sleep = sleep or time.sleep
         self.cal = calendar or TradingCalendar(config.exchange)
         self.started_at = self.clock().isoformat()
+        self.consecutive_failures = 0
+        self.retry_not_before: datetime | None = None
+        self.halted: str | None = None
+        self.last_error: dict[str, Any] | None = None
 
     def due(self, now: datetime) -> tuple[bool, str]:
         """Cheap decision from the calendar and the checkpoint (no database access)."""
@@ -88,18 +109,55 @@ class Scheduler:
         now = self.clock()
         due, reason = self.due(now)
         status = None
-        if due:
-            result = self.make_pipeline().run(mode="scheduled", now=now)
-            status = result.status
-            log.info(
-                "operations.scheduled_run",
-                run_id=result.run_id,
-                status=status,
-                targets=result.target_sessions,
+        error = None
+        if due and self.retry_not_before is not None and now < self.retry_not_before:
+            due = False
+            reason = (
+                f"backing off after {self.consecutive_failures} failed run(s); "
+                f"next attempt not before {self.retry_not_before.isoformat()}"
             )
+        if due:
+            # Only ordinary exceptions are handled; KeyboardInterrupt/SystemExit propagate.
+            try:
+                result = self.make_pipeline().run(mode="scheduled", now=now)
+            except Exception as exc:
+                status, error = RUN_ERROR, safe_error(exc)
+                self._record_failure(now, exc, error)
+            else:
+                status = result.status
+                self.consecutive_failures = 0
+                self.retry_not_before = None
+                log.info(
+                    "operations.scheduled_run",
+                    run_id=result.run_id,
+                    status=status,
+                    targets=result.target_sessions,
+                )
         nxt = now + timedelta(seconds=self.cfg.scheduler_poll_seconds)
         self.store.heartbeat(self._heartbeat(now, nxt, reason, status))
-        return TickResult(now.isoformat(), due, reason, status, nxt.isoformat())
+        return TickResult(now.isoformat(), due, reason, status, nxt.isoformat(), error)
+
+    def _record_failure(self, now: datetime, exc: Exception, error: str) -> None:
+        """One log line per failed run; then either a bounded back-off or a halt."""
+        self.consecutive_failures += 1
+        self.last_error = {"at": now.isoformat(), "error": error}
+        if isinstance(exc, FATAL_ERRORS):
+            self.halted = f"fatal error ({type(exc).__name__}); operator action required"
+        elif self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            self.halted = f"{self.consecutive_failures} consecutive failed runs"
+        else:
+            delay = min(
+                self.cfg.scheduler_poll_seconds * 2 ** (self.consecutive_failures - 1),
+                FAILURE_BACKOFF_CAP_S,
+            )
+            self.retry_not_before = now + timedelta(seconds=delay)
+        log.error(
+            "operations.scheduled_run_failed",
+            error=error,
+            consecutive_failures=self.consecutive_failures,
+            retry_not_before=self.retry_not_before.isoformat() if self.retry_not_before else None,
+            halted=self.halted,
+        )
 
     def _heartbeat(
         self, now: datetime, nxt: datetime, reason: str, status: str | None
@@ -117,6 +175,12 @@ class Scheduler:
                 self.cal, now, self.cfg.grace_minutes
             ).isoformat(),
             "poll_seconds": self.cfg.scheduler_poll_seconds,
+            "consecutive_failures": self.consecutive_failures,
+            "last_error": self.last_error,
+            "retry_not_before": self.retry_not_before.isoformat()
+            if self.retry_not_before
+            else None,
+            "halted": self.halted,
         }
 
     def run_forever(self, max_ticks: int | None = None) -> list[TickResult]:
@@ -125,10 +189,13 @@ class Scheduler:
         try:
             while max_ticks is None or len(results) < max_ticks:
                 results.append(self.tick())
+                if self.halted:
+                    log.critical("operations.scheduler_halted", reason=self.halted)
+                    break
                 if max_ticks is None or len(results) < max_ticks:
                     self.sleep(self.cfg.scheduler_poll_seconds)
-        except KeyboardInterrupt:
-            log.info("operations.scheduler_stopped")
+        except KeyboardInterrupt:  # operator stop (Ctrl+C): end the loop, never continue
+            log.info("operations.scheduler_stopped", reason="KeyboardInterrupt")
         return results
 
 
@@ -137,6 +204,8 @@ def scheduler_status(store: OpsStore | None, now: datetime, poll_seconds: int) -
     hb = (store.state.get("scheduler") or {}) if store else {}
     if not hb:
         return {"status": "not running (no heartbeat)", **hb}
+    if hb.get("halted"):
+        return {"status": f"halted: {hb['halted']}", **hb}
     age = (now - datetime.fromisoformat(hb["last_check"])).total_seconds()
     alive = age <= 2 * poll_seconds + 60
     return {

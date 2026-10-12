@@ -647,3 +647,118 @@ def test_index_entries_use_the_shared_hash(tmp_path: Path) -> None:
     for line in reg.index_path.read_text(encoding="utf-8").splitlines():
         e = json.loads(line)
         assert e["hash"] == entry_hash(e)
+
+
+# ── Phase 6, B5: only regular files verify; nothing raises out of records() ──
+
+
+def _replace_with_dir(p: Path) -> None:
+    p.unlink()
+    p.mkdir()
+
+
+@pytest.mark.parametrize(
+    ("content", "damage", "expected"),
+    [
+        ("x,y\n1,2\n", _replace_with_dir, "artifact not a regular file: a.csv"),
+        ("", _replace_with_dir, "artifact not a regular file: a.csv"),  # 0 bytes: used to raise
+        ("x,y\n1,2\n", lambda p: p.unlink(), "artifact missing: a.csv"),
+        (
+            "x,y\n1,2\n",
+            lambda p: p.write_text("longer content", encoding="utf-8"),
+            "artifact altered: a.csv",
+        ),
+        (
+            "x,y\n1,2\n",
+            lambda p: p.write_bytes(b"x,y\n9,9\n"),
+            "artifact altered: a.csv",
+        ),  # same size
+    ],
+)
+def test_non_regular_missing_or_altered_artifacts_are_integrity_failures(
+    tmp_path: Path, content: str, damage: Any, expected: str
+) -> None:
+    reg = make(tmp_path)
+    good = publish(reg)
+    bad = publish(reg, {"a.csv": content, "b.json": "{}"})
+    damage(reg.published / bad.run_id / "a.csv")
+    rec = reg.get(bad.run_id)
+    assert rec.status is RunStatus.INTEGRITY_FAILED and expected in rec.problems, rec.problems
+    assert reg.latest_complete("validation").run_id == good.run_id  # type: ignore[union-attr]
+
+
+def test_symlinked_artifact_is_not_followed(tmp_path: Path) -> None:
+    reg = make(tmp_path)
+    rec = publish(reg)
+    a = reg.published / rec.run_id / "a.csv"
+    outside = tmp_path / "outside.csv"
+    outside.write_bytes(a.read_bytes())  # identical content outside the run directory
+    a.unlink()
+    try:
+        a.symlink_to(outside)
+    except OSError:
+        pytest.skip("symbolic links not permitted for this user")
+    got = reg.get(rec.run_id)
+    assert got.status is RunStatus.INTEGRITY_FAILED
+    assert "artifact not a regular file: a.csv" in got.problems
+
+
+def test_non_regular_manifest_or_run_path_is_an_integrity_failure(tmp_path: Path) -> None:
+    import shutil
+
+    reg = make(tmp_path)
+    m_run, d_run = publish(reg), publish(reg)
+    _replace_with_dir(reg.published / m_run.run_id / rr.MANIFEST)
+    shutil.rmtree(reg.published / d_run.run_id)
+    (reg.published / d_run.run_id).write_text("not a directory", encoding="utf-8")
+    assert reg.get(m_run.run_id).problems == ("published manifest is not a regular file",)
+    assert reg.get(d_run.run_id).problems == ("published run path is not a regular directory",)
+    assert all(
+        r.status is RunStatus.INTEGRITY_FAILED
+        for r in (reg.get(m_run.run_id), reg.get(d_run.run_id))
+    )
+
+
+# ── Phase 6, B6: a failure recorded after the directory was published ──
+
+
+def test_failure_after_publication_is_explicit_and_keeps_the_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reg = make(tmp_path)
+    h = start(reg)
+    h.write_artifact("a.csv", "x")
+    original = reg._append
+
+    def crash(body: dict[str, Any]) -> None:
+        if body["event"] == "completed":
+            raise OSError("disk full after the rename (injected)")
+        original(body)
+
+    monkeypatch.setattr(reg, "_append", crash)
+    with pytest.raises(OSError):
+        h.publish()
+    monkeypatch.undo()
+    pending = reg.get(h.run_id)
+    assert pending.status is RunStatus.INCOMPLETE
+    assert "published directory present without a completed event" in pending.problems
+    rec = h.fail("OSError: disk full after the rename")
+    assert rec.status is RunStatus.FAILED and rec.manifest is None
+    assert rec.problems == (
+        "published directory present although the run failed "
+        "(kept for diagnosis; not a complete run)",
+    )
+    run_dir = reg.published / h.run_id
+    assert (run_dir / "a.csv").read_text(encoding="utf-8") == "x" and (
+        run_dir / rr.MANIFEST
+    ).is_file()
+    assert reg.latest_complete("validation") is None
+    events = [json.loads(x) for x in reg.index_path.read_text(encoding="utf-8").splitlines()]
+    assert [(e["seq"], e["event"]) for e in events] == [(1, "started"), (2, "failed")]
+    assert all(e["hash"] == entry_hash(e) for e in events)  # chain intact, append-only
+
+
+def test_plain_failure_has_no_published_directory_problem(tmp_path: Path) -> None:
+    reg = make(tmp_path)
+    rec = start(reg).fail("engine error")
+    assert rec.status is RunStatus.FAILED and rec.problems == ()

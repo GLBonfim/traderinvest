@@ -86,6 +86,13 @@ automatically **only** if it was taken on this host and its process is verified 
 terminate the process). Locks of live processes (possibly reused PIDs) or other hosts are never
 removed automatically: `ops unlock --force` is the explicit operator action.
 
+The short check-then-act sections run under an OS mutex on the persistent
+`pipeline.lock.mutex` (ADR-0032). If that mutex cannot be obtained within its timeout the lock
+state is unknown: `LockMutexTimeoutError` (a `LockHeldError`, so the run is still `LOCKED` and
+does nothing) and the alert says the lock *could not be checked* — it is not reported as proof
+that another pipeline holds it. `unlock --force` in the same situation raises `LockReleaseError`
+and leaves the lock unchanged.
+
 ## Persistence (`data/operations/`, git-ignored)
 
 | File | Content |
@@ -108,6 +115,17 @@ into no-ops, so the polling frequency never changes any financial behaviour. Tim
 injected; tests never wait. To start it at logon, the user may create a Windows Task Scheduler
 entry for `uv run python -m app.operations.cli scheduler` — no OS scheduler is installed or
 configured by the project. No Celery, Redis, APScheduler or services.
+
+Failure policy (ADR-0033). Stage failures are already results inside the pipeline; an exception
+that escapes a scheduled run is caught (`Exception` only — `KeyboardInterrupt`/`SystemExit` are
+never absorbed), logged once (`operations.scheduled_run_failed`, single-line message with URL
+credentials masked) and written to the heartbeat (`last_run_status = RUN_ERROR`, `last_error`,
+`consecutive_failures`, `retry_not_before`). The pipeline's lock is released by the pipeline
+itself (`finally`). The scheduler then keeps polling but does not retry before
+`poll × 2^(n−1)` seconds (capped at 1 h); after 3 consecutive failed runs, or immediately after a
+`LockReleaseError` or `OpsStoreError` (lock or store state uncertain), it **halts**: the heartbeat
+shows `halted`, `ops status` reports "halted: …", and an operator must investigate and restart
+it. Ctrl+C stops the loop (logged as `operations.scheduler_stopped`).
 
 ## CLI
 
@@ -153,6 +171,71 @@ consecutive failures, interrupted runs, mean/max seconds per stage — not tradi
 (AST test); its only network path is the existing data provider during INGEST (and the existing
 optional alert webhook).
 
+## Recovery procedures (manual; preserve evidence first)
+
+Nothing below is automated. No tool deletes, rebuilds, re-chains or rewrites a hash-chained
+history; doing so would destroy the evidence the chain exists to provide. Every step is an
+explicit operator decision.
+
+### Research run registry: corrupt `index.jsonl` (B3)
+
+The registry (`data/research_runs/`, ADR-0030) refuses a corrupt history: readers raise
+`RegistryCorruptError`, writers refuse to append.
+
+1. **Recognise the problem.**
+   `uv run python -m app.validation.cli verify --registry data/research_runs` exits `3` with
+   "registry history is corrupt: … line N …" → the **index** is damaged (invalid JSON, broken
+   hash chain, impossible event sequence). Exit `1` with per-run problems (`artifact missing`,
+   `artifact altered`, `artifact not a regular file`, `manifest does not match …`,
+   `published directory present although the run failed`) → the **index is intact** and
+   individual **run directories** are damaged or incomplete; those runs are never shown as
+   complete and nothing else needs repair.
+2. **Stop writers and preserve evidence before anything else.** Make sure no `record` is
+   running and no `pipeline.lock` exists in the registry root. Copy the whole registry
+   directory, unchanged, to a dated location outside the repository (e.g.
+   `C:\dev\backup\research_runs-<UTC timestamp>`) and record the SHA-256 of every copied file.
+   Work only on copies from then on.
+3. **Diagnose.** Note the first failing line reported by `verify`. A damaged **last** line
+   (truncated JSON) is typical of a crash or power loss during an append; a damaged line in
+   the middle, or a valid line whose hash no longer matches, means the file was modified.
+   Compare with earlier backups if any exist.
+4. **Decide explicitly (and write the decision down).** Options, in order of preference:
+   - keep the corrupt registry frozen as evidence and point future runs at a **new, empty
+     registry directory**; published run directories in the old root remain readable files
+     but are no longer verified and must not be presented as verified results;
+   - restore an earlier **verified** backup of the whole registry; runs recorded after that
+     backup then appear as `unregistered` directories and must not be treated as complete.
+   Events that are not available in any copy cannot be recovered; do not reconstruct them.
+5. **Verify afterwards** with `verify` (exit `0` required for the chosen registry) and compare
+   the SHA-256 of the remaining artifacts with their manifests.
+
+The same principles apply to the other hash-chained stores (`data/operations/runs.jsonl`,
+alert and paper ledgers): they raise on corruption and are never repaired automatically.
+
+### After merging a change to the lock implementation (B4)
+
+The OS mutex of ADR-0032 only protects processes that run the new code: a process started
+before the change keeps the old lock code until it is restarted, and old and new code must
+never contend for the same data directory.
+
+Long-running processes that use `PipelineLock`:
+- the scheduler (`app.operations.cli scheduler`);
+- the Streamlit dashboard (its Operations page reads the lock and can run the pipeline).
+
+The FastAPI/Uvicorn app does **not** import `app.operations` (import-boundary tests), so it
+does not need a restart for the lock. Short-lived CLI commands (`ops run`, `record`) simply must
+not be running at the moment of the switch.
+
+1. Before: list the running Python processes and their command lines
+   (`Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Select ProcessId, CommandLine`);
+   check `ops status` (no `pipeline.lock` owner, scheduler heartbeat) and record `git rev-parse
+   HEAD`.
+2. Stop the scheduler and the dashboard in a controlled way (Ctrl+C) while no run is in
+   progress (no lock owner).
+3. Switch the code; record the new `git rev-parse HEAD`.
+4. Restart them; confirm the new process ids, a fresh heartbeat (`started_at`) and that
+   `ops status` / `ops verify` are clean.
+
 ## Limitations
 
 - One instrument (SPY) and one provider; daily bars only.
@@ -161,5 +244,5 @@ optional alert webhook).
 - Precheck "calendar" uses the machine clock to check the calendar's horizon.
 - One pipeline at a time per data directory (by design); no distributed locking.
 - Shared read-only helpers are imported from `app.dashboard.services` (dataset identity,
-  freshness, health) and the hash-chain helper from `app.alerts.store` (technical debt: move to a
-  shared module).
+  freshness, health). The hash-chain and atomic-write primitives live in `app.core.integrity`
+  (the operations store still imports them through their `app.alerts.store` aliases).
