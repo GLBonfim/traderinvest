@@ -35,6 +35,7 @@ import pandas as pd
 from app.backtest.config import BacktestConfig
 from app.core.integrity import atomic_write
 from app.research_runs.registry import detect_code_version
+from app.risk import artifacts as art
 from app.risk.config import RISK_VERSION, SCENARIOS, RiskConfig
 from app.risk.diagnostics import (
     COMPARED_METRICS,
@@ -56,7 +57,7 @@ from app.validation.config import (
 )
 
 MANIFEST = "manifest.json"
-MANIFEST_SCHEMA = "risk-research-run/2"  # /2: environment, statistics, events
+MANIFEST_SCHEMA = "risk-research-run/3"  # /2: environment, statistics, events; /3: daily returns
 TABLE = "risk_table.csv"
 COMPARISONS = "risk_comparisons.csv"
 CONTROL = "control_no_overlay"
@@ -609,6 +610,12 @@ def execute(
         if sel.compare:
             write_new(run_dir / COMPARISONS, comparisons.to_csv(index=False, lineterminator="\n"))
             artifacts.append(COMPARISONS)
+        keys = [(s.name, st, sc.name) for s in sel.slices for st in sel.strategies
+                for sc in sel.scenarios]  # fmt: skip
+        ordered = [(k, report.runs[k]) for k in keys]
+        returns_text, series = art.build_returns(ordered, sel.cost.name)
+        art.write_new_atomic(run_dir / art.RETURNS_FILE, returns_text)
+        artifacts.append(art.RETURNS_FILE)
         manifest["results"] = {
             "runs": len(report.runs),
             "table_rows": len(table),
@@ -620,6 +627,16 @@ def execute(
             "backtest_fingerprint": report.backtest_fingerprint,
             "timings_ms": report.timings_ms,
             "intervention_events": events,
+            "daily_returns": {
+                "path": art.RETURNS_FILE,
+                "schema": art.RETURNS_SCHEMA,
+                "columns": list(art.RETURNS_COLUMNS),
+                "convention": art.RETURN_CONVENTION,
+                "initial_capital": sel.backtest_config().initial_capital,
+                "cost_scenario": sel.cost.name,
+                "rows": sum(i.rows for i in series),
+                "series": [i.to_dict() for i in series],
+            },
             "estimates_outside_own_interval": [
                 {k: c[k] for k in ("slice", "strategy", "scenario", "metric")}
                 for c in report.comparisons

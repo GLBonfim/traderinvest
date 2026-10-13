@@ -161,8 +161,9 @@ written; an invalid selection exits with code 2):
 `<out-root>/<run_id>` (default `data/risk/risk-<UTC timestamp>Z-<8 hex>`). The directory is
 created with one atomic `mkdir`; an existing path — even an empty directory — is refused (exit
 code 3) and left untouched. Result files are created exclusively (never overwritten); nothing
-is deleted or cleaned. Contents: `manifest.json`, `risk_table.csv` and, with comparisons,
-`risk_comparisons.csv`. Exit code 0 only when the run is complete; 1 on failure.
+is deleted or cleaned. Contents: `manifest.json`, `risk_table.csv`, `daily_returns.csv` and,
+with comparisons, `risk_comparisons.csv`. Exit code 0 only when the run is complete; 1 on
+failure.
 
 **Database access: read-only, verified** (`app/database/readonly.py`). `PGOPTIONS` cannot be
 used — the application passes its own libpq `options` (`-c timezone=UTC`), which takes
@@ -200,8 +201,9 @@ command `BEGIN READ ONLY`, `SHOW transaction_read_only = on` (with the session d
 `default_transaction_read_only = off`, i.e. the protection comes from the transaction), no
 transaction id assigned, and a non-read statement refused before it was sent.
 
-**Manifest** (`manifest.json`, schema `risk-research-run/2` — runs recorded before this
-change carry `risk-research-run/1` and are not rewritten — written atomically at start and at
+**Manifest** (`manifest.json`, schema `risk-research-run/3` — runs recorded earlier carry
+`risk-research-run/1` or `/2` and are never rewritten; `/3` only adds
+`results.daily_returns` and the returns artifact — written atomically at start and at
 the end): `run_id`; `status` (`running` → `complete` | `failed`; **only `complete` is a
 result** — a run interrupted or unable to write its final manifest stays `running`);
 `started_at`/`completed_at` (UTC); `code` (app version, git commit, branch, dirty flag);
@@ -216,7 +218,8 @@ covering all its fields including slices and cost scenarios the risk comparisons
 use — `family`, `interval_kind`, `compared_metrics`, `order_dependent_metrics`); `input` (symbol, source, rows, first/last
 bar, data fingerprint); `results` (run and row counts, metric columns, comparisons, the
 sessions actually simulated per slice, timings, `intervention_events`,
-`estimates_outside_own_interval`); `artifacts` (path, SHA-256, bytes); `error`.
+`estimates_outside_own_interval`, `daily_returns`); `artifacts` (path, SHA-256, bytes);
+`error`.
 No settings, environment values or credentials are recorded.
 
 **Data fingerprint** (`bars-canonical-v1`): SHA-256 over UTF-8 text — a header line
@@ -251,6 +254,91 @@ ineffective), `single` (1), `few` (below the threshold), `several` (at or above 
 continuously). The threshold is a documented convention (`SPARSE_EVENT_THRESHOLD = 5`, recorded
 in `statistics.sparse_event_threshold`, configurable through `execute(...,
 sparse_event_threshold=...)`), not a statistical rule.
+
+**Daily net returns** (`daily_returns.csv`, schema `risk-daily-returns/1`,
+`app/risk/artifacts.py`). The per-session series each run actually produced, taken from
+`RiskRun.equity` during the run (no extra simulation, never rebuilt from aggregate metrics), one
+long table for every (slice, strategy, scenario) of the run:
+
+`slice,strategy,scenario,cost_scenario,session,ts,equity,daily_return,position,costs`
+
+- `session` = 0-based position in its series; `ts` = bar open time in the canonical form
+  `YYYY-MM-DDTHH:MM:SS[.ffffff]+00:00` (`pandas.Timestamp.isoformat()` of the UTC instant;
+  naive values, `Z` and other offsets are refused even for the same instant); series in the
+  run's canonical order, sessions strictly increasing; no missing sessions inside a series;
+- `equity` = cash + shares × raw close after the open fill; `daily_return` =
+  equity(t)/equity(t−1) − 1 with equity(−1) = the backtest initial capital — the net series the
+  bootstrap comparisons use; the cost scenario's costs (commission, half spread, slippage) are
+  deducted from cash at the fill; raw prices, no dividends; `position` = exposure at the close;
+  `costs` = costs paid that session. A session without a position is an ordinary row (position
+  0, return 0 unless costs were paid);
+- floats in Python `repr` (lossless for float64); non-finite values written as `nan`, `inf`,
+  `-inf` and never imputed (their count per series is in the manifest);
+- published atomically and never over an existing file: written, flushed and fsynced to
+  `<name>.tmp` (created exclusively — an existing `.tmp` is not ours and is never touched),
+  hard-linked to the final name (refused if it exists), temporary removed. A failure before
+  publication removes the temporary file when it can; if that cleanup fails too, the
+  residue is reported as a note on the original error, which is not hidden. A failure to
+  remove the temporary name after publication fails the run (fail-closed). The run is then
+  `failed`, never `complete`. The directory is not fsynced, so the durability of the new
+  name after a power loss is not guaranteed. Requires hard links (NTFS, ext4, APFS).
+
+`results.daily_returns` records `path`, `schema`, `columns`, `convention`, `initial_capital`,
+`cost_scenario`, total `rows` and, per series, slice / strategy / scenario / cost scenario,
+`rows`, `first_ts`, `last_ts`, `non_finite_returns`, `risk_fingerprint` and
+`backtest_fingerprint`; the file's SHA-256 and size are in `artifacts`, and the code and
+configuration that produced it are the manifest's `code`, `environment` and `config`.
+
+**Read-only verification.**
+
+```bash
+uv run python -m app.risk.cli verify --run data/risk/<run_id>   # exit 0 ok, 1 problems (JSON)
+```
+
+`app.risk.artifacts.verify_run` reads only, never writes or repairs, needs no database or
+settings, and never raises: every problem — including a malformed manifest — is reported.
+
+1. **Structure first**, per schema version, before any nested value is used: `/1` (selection,
+   artifacts, results counts and windows, configuration fingerprints, slices, cost scenario),
+   `/2` (+ `environment`, `statistics`), `/3` (+ `results.daily_returns` with its series
+   list). Wrong types or missing fields are problems, not exceptions.
+2. **Artifact names**: plain file names only (`^[A-Za-z0-9][A-Za-z0-9_.-]*$`); `manifest.json`,
+   absolute paths, separators, `..`, symbolic links and anything resolving outside the run
+   directory are refused before any file is opened.
+3. **Files**: each artifact read once; size and SHA-256 checked on those bytes, which are the
+   bytes later parsed. Required artifacts per version: `risk_table.csv`, plus
+   `risk_comparisons.csv` when `selection.compare`, plus `daily_returns.csv` for `/3`; a
+   `complete` run cannot pass with `artifacts: []`; artifacts not defined by the version,
+   duplicated entries and unexpected files (e.g. a left `.tmp`) are problems.
+4. **Results vs selection** (every version): `runs` = `table_rows` = selected cases;
+   `comparisons` = slices × strategies × overlays × 4 metrics when comparing, else 0; the table
+   and comparison rows are exactly the selected keys (comparisons against the control).
+5. **Daily returns** (`/3`): header and `columns`; `convention`; canonical timestamps and
+   lossless values on every row; unique keys, `session` 0..n−1 and strictly increasing `ts`;
+   series = selection = manifest list (no duplicates); one cost scenario across selection,
+   configuration, block, series and rows; `initial_capital` = the backtest configuration;
+   per-series rows / first / last bar / non-finite count = manifest = `results.windows`;
+   `risk_fingerprint` = the recorded scenario fingerprint; `backtest_fingerprint` = the
+   fingerprint of the slice-specific backtest configuration rebuilt from the recorded one (the
+   recorded base fingerprint must first be reproducible with the running code, otherwise the
+   series fingerprints cannot be validated and verification fails); every finite return
+   consistent with the recorded equity (relative tolerance 1e-12).
+
+**Guarantee: self-consistency, not authenticity.** Sizes, hashes and cross-checks show that a
+run is internally consistent and has not been damaged or edited in one place only. They do
+not detect a coordinated edit of the manifest and its artifacts with recomputed hashes (e.g.
+equity and return changed together). Detecting that would need the manifest's SHA-256 anchored
+outside the run directory (for instance in a hash-chained registry), which is not implemented.
+Historical `/1` and `/2` runs are checked against their own minimum requirements only.
+
+**For later statistics.** `load_returns_matrix(run_dir, slice_name=…, strategy=…,
+scenarios=[…])` returns the session × scenario matrix of net returns from a run that verifies,
+parsed from the very bytes whose SHA-256 was checked (no verify-then-reread). It raises
+`ReturnsMatrixError` (a `ValueError`) with the reason for an unverified run, an empty or
+duplicated scenario list, a missing series or series not aligned session by session; it
+never aligns, imputes or merges columns. Persisting returns makes comparisons
+reproducible and auditable; it does not by itself validate any statistical method applied to
+them (no p-values, multiple-comparison corrections or new intervals are computed here).
 
 ## Point-in-time guarantees (tested)
 

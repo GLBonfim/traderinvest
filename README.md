@@ -198,6 +198,7 @@ Risk overlays on the baselines (measurement only; full suite ~60 s; each run wri
 uv run python -m app.risk.cli run --symbol SPY                 # full suite (6 x 6 x 3)
 uv run python -m app.risk.cli run --symbol SPY --strategy sma_trend \
     --scenario control_no_overlay atr_stop_3 --cost D --slice full   # only the selected cases
+uv run python -m app.risk.cli verify --run data/risk/<run_id>  # read-only integrity check
 ```
 
 Architecture, formulas, stop/OHLC conventions and results: [docs/risk-management.md](docs/risk-management.md).

@@ -18,7 +18,7 @@ from app.risk.engine import RiskRun
 from app.validation.config import ValidationConfig
 from app.validation.metrics import matrix_metrics
 from app.validation.resampling import bootstrap_summary, percentile_interval
-from tests.unit.risk.test_research_cli import SELECT, make_bars
+from tests.unit.risk.test_research_cli import SELECT, fake_equity, make_bars
 
 ORIGINAL_COLUMNS = [
     "slice", "strategy", "scenario", "vs", "metric", "estimate", "lower", "upper",
@@ -35,7 +35,7 @@ def run_with(
     returns: np.ndarray, scenario: str = "x", diag: dict[str, float] | None = None
 ) -> RiskRun:
     idx = pd.date_range("2020-01-02", periods=len(returns), freq="D", tz="UTC")
-    equity = pd.DataFrame({"daily_return": returns}, index=idx)
+    equity = fake_equity(idx, list(returns))
     metrics = {k: 0.0 for k in METRIC_KEYS}
     empty = pd.DataFrame()
     return RiskRun("s", scenario, empty, equity, empty, empty, None, None, metrics, diag or {})
@@ -222,7 +222,8 @@ def _manifest(path: Path) -> dict[str, Any]:
 
 def test_manifest_records_environment_statistics_and_events(complete_run: Path) -> None:
     m = _manifest(complete_run)
-    assert m["schema_version"] == "risk-research-run/2" and m["status"] == research.COMPLETE
+    # v2 fields are still present in the current (v3) schema
+    assert m["schema_version"] == "risk-research-run/3" and m["status"] == research.COMPLETE
     assert m["environment"] == {"numpy_version": np.__version__}
     comp = m["config"]["comparisons"]
     assert comp["validation_config_fingerprint"] == ValidationConfig().fingerprint()

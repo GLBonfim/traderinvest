@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from app.risk import artifacts as art
 from app.risk import cli, research
 from app.risk.diagnostics import METRIC_KEYS, RiskSuiteReport
 from app.risk.engine import RiskRun
@@ -42,6 +43,16 @@ def make_bars(n: int = 6) -> pd.DataFrame:
     )
 
 
+def fake_equity(index: pd.Index, returns: list[float], initial: float = 100_000.0) -> pd.DataFrame:
+    """Equity curve consistent with `returns` (equity(-1) = initial), as RiskRun.equity has."""
+    equity = initial * np.cumprod(1.0 + np.asarray(returns, dtype="float64"))
+    n = len(returns)
+    return pd.DataFrame(
+        {"equity": equity, "daily_return": returns, "position": [1.0] * n, "costs": [0.0] * n},
+        index=index,
+    )
+
+
 class FakeSuite:
     """Records the arguments it receives and returns exactly the requested runs (or `extra`)."""
 
@@ -64,7 +75,7 @@ class FakeSuite:
                 key[1],
                 key[2],
                 pd.DataFrame(),
-                pd.DataFrame({"daily_return": [0.0, 0.01]}, index=bars.index[:2]),
+                fake_equity(bars.index[:2], [0.0, 0.01]),
                 pd.DataFrame(),
                 pd.DataFrame(),
                 None,
@@ -214,7 +225,9 @@ def test_no_compare_writes_no_comparison_file(tmp_path: Path) -> None:
     suite = FakeSuite()
     code, _ = run_cli(["run", "--symbol", "SPY", "--out", str(out), *SELECT, "--no-compare"], suite)
     assert code == cli.EXIT_OK and suite.calls[0]["compare"] is False
-    assert sorted(p.name for p in out.iterdir()) == [research.MANIFEST, research.TABLE]
+    assert sorted(p.name for p in out.iterdir()) == sorted(
+        [research.MANIFEST, research.TABLE, art.RETURNS_FILE]
+    )
 
 
 # ── 4/5. exclusive output directory ──
@@ -382,7 +395,7 @@ def test_manifest_records_code_selection_config_input_and_artifacts(tmp_path: Pa
     assert m["results"]["runs"] == 4 and m["results"]["table_rows"] == 4
     assert m["results"]["windows"]["full"]["sessions"] == 2
     paths = [a["path"] for a in m["artifacts"]]
-    assert paths == [research.TABLE, research.COMPARISONS]
+    assert paths == [research.TABLE, research.COMPARISONS, art.RETURNS_FILE]
     for a in m["artifacts"]:
         data = (out / a["path"]).read_bytes()
         assert a["bytes"] == len(data)

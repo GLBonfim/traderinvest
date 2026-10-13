@@ -8,8 +8,14 @@ Without selection options the whole suite runs (every strategy x scenario x slic
 as before. With ANY of --strategy/--scenario/--cost/--slice, all four are required and only
 the selected cases run (see `app.risk.research`). Every run writes into a NEW directory
 (default `<out-root>/<run_id>`; an existing path is refused) with `manifest.json`,
-`risk_table.csv` and, with comparisons, `risk_comparisons.csv` (git-ignored data/). Not an
-optimisation: no scenario is selected.
+`risk_table.csv`, `daily_returns.csv` and, with comparisons, `risk_comparisons.csv`
+(git-ignored data/). Not an optimisation: no scenario is selected.
+
+uv run python -m app.risk.cli verify --run data/risk/<run_id>
+
+`verify` checks a recorded run READ-ONLY (manifest, artifact sizes and SHA-256, unexpected
+files, daily returns vs manifest; see `app.risk.artifacts`); it never writes or repairs, and
+needs neither the database nor the settings.
 """
 
 import argparse
@@ -19,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.logging import get_logger
-from app.risk import research
+from app.risk import artifacts, research
 from app.risk.diagnostics import run_risk_suite
 
 log = get_logger(__name__)
@@ -73,7 +79,15 @@ def build_parser() -> argparse.ArgumentParser:
                      help=f"one or more of: {', '.join(research.slice_names())}")  # fmt: skip
     run.add_argument("--no-compare", action="store_true",
                      help="selective runs only: skip the bootstrap comparisons")  # fmt: skip
+    ver = sub.add_parser("verify", help="Read-only integrity check of a recorded run")
+    ver.add_argument("--run", type=Path, required=True, help="run directory")
     return parser
+
+
+def verify(run_dir: Path) -> int:
+    report = artifacts.verify_run(run_dir)
+    print(json.dumps(report.to_dict(), indent=2))
+    return EXIT_OK if report.ok else EXIT_FAILED
 
 
 def main(
@@ -84,6 +98,8 @@ def main(
     configure: bool = True,
 ) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "verify":
+        return verify(args.run)
     try:  # 1. validate the selection: nothing is read or written before this succeeds
         sel = research.resolve_selection(
             strategies=args.strategy,
