@@ -105,9 +105,11 @@ All: rebalance band 0.10, Phase 8 default costs, raw prices, no dividends, long-
 | sma_crossover | ATR stop 3 | 2.3% | 10.6% | **0.27** | −39.5% | 179 | 7,613 | 0.66 / 0.58 / 0.58 | 34 stops, 20 touches |
 | rsi_momentum | vol target 10% | 2.3% | 7.3% | 0.34 | −22.7% | 1,203 | 31,696 | 0.66 / 0.52 / 0.51 | 43% |
 
-(Full 6 × 6 × 3 table: `uv run python -m app.risk.cli run --symbol SPY` → `data/risk/risk_table.csv`.)
+(Full 6 × 6 × 3 table: `uv run python -m app.risk.cli run --symbol SPY` → `data/risk/<run_id>/risk_table.csv`; see [Running the suite](#running-the-suite-full-or-selective).)
 
-Paired block-bootstrap differences vs control (full slice, Phase 9 resampler, 95%,
+Paired block-bootstrap differences vs control — **exploratory** percentile intervals of the
+realized returns, not validated confidence intervals (see *Statistical outputs* below and
+[statistical-validation.md](statistical-validation.md)) (full slice, Phase 9 resampler, 95%,
 **descriptive, no p-values; 360 intervals = 6 strategies × 5 overlays × 4 metrics × 3 slices**):
 
 - Every sizing overlay reduces volatility with intervals excluding 0 (e.g. buy & hold vol target:
@@ -124,6 +126,131 @@ Paired block-bootstrap differences vs control (full slice, Phase 9 resampler, 95
 Interpretation: sizing overlays trade return for lower volatility and drawdown roughly
 proportionally; locks and stops are path-dependent and can hurt. None of this is evidence of
 value, and multiplicity (360 descriptive intervals) applies to any later formal use.
+
+## Running the suite (full or selective)
+
+```bash
+# full suite, as before: every strategy x every scenario x every slice, cost D
+uv run python -m app.risk.cli run --symbol SPY [--out-root data/risk | --out DIR]
+
+# selective: ONLY the listed cases
+uv run python -m app.risk.cli run --symbol SPY --strategy sma_trend \
+    --scenario control_no_overlay fixed_fraction_50 drawdown_lock_20 atr_stop_3 \
+    --cost D --slice full early late [--no-compare]
+```
+
+**Selection** (`app/risk/research.py`, validated before any data is read or anything is
+written; an invalid selection exits with code 2):
+
+| Option | Values | Notes |
+|---|---|---|
+| `--strategy` | `buy_and_hold`, `sma_trend`, `sma_crossover`, `rsi_momentum`, `price_action_trend`, `regime_trend` | one or more; only these strategies are computed |
+| `--scenario` | the six pre-declared scenarios | one or more; must include `control_no_overlay` (the suite measures every overlay against it) |
+| `--cost` | `A_zero`, `B_5bps`, `C_10bps`, `D_default` (or `A`–`D`) | exactly one ([statistical-validation.md](statistical-validation.md)); `D` = the Phase 8 default |
+| `--slice` | `full`, `early` (≤ 2009-12-31), `late` (≥ 2010-01-01) | one or more |
+| `--no-compare` | — | skip the bootstrap comparisons (selective runs only) |
+
+- **No implicit widening.** Without any of `--strategy/--scenario/--cost/--slice` the full
+  suite runs (previous behaviour, cost D). As soon as one is given, **all four are required**;
+  a partial selection is refused, never completed with defaults. Unknown, duplicate or empty
+  values are refused. Comparisons need the control plus at least one overlay.
+- The run is checked against the selection: a result outside it fails the run.
+- Scenarios and slices run in their pre-declared order (control first), whatever the order typed.
+
+**Output.** Every run writes into a NEW directory: `--out DIR` (exact path) or
+`<out-root>/<run_id>` (default `data/risk/risk-<UTC timestamp>Z-<8 hex>`). The directory is
+created with one atomic `mkdir`; an existing path — even an empty directory — is refused (exit
+code 3) and left untouched. Result files are created exclusively (never overwritten); nothing
+is deleted or cleaned. Contents: `manifest.json`, `risk_table.csv` and, with comparisons,
+`risk_comparisons.csv`. Exit code 0 only when the run is complete; 1 on failure.
+
+**Database access: read-only, verified** (`app/database/readonly.py`). `PGOPTIONS` cannot be
+used — the application passes its own libpq `options` (`-c timezone=UTC`), which takes
+precedence over the environment variable (verified: with `PGOPTIONS=-c
+default_transaction_read_only=on` the application connection still reported `off`). The CLI
+loader therefore uses:
+
+1. a dedicated, short-lived engine (`read_only_engine()`: NullPool, no pre-ping, disposed after
+   the load; the application's shared engine and pool are not touched) whose connections carry
+   `postgresql_readonly=True`. With psycopg 3 this sets `Connection.read_only = True` when the
+   connection is created, so psycopg opens **every** transaction on it with `BEGIN READ ONLY`
+   (PostgreSQL then rejects any write) — also after a commit or rollback, and on any other
+   connection of this engine;
+2. a `before_cursor_execute` guard on that engine, run before **every** statement: only
+   `SELECT`/`SHOW` are allowed; the DBAPI connection's `read_only` must be `True`; and, on the
+   same cursor and in the same transaction, `SHOW transaction_read_only` must return `on`
+   immediately before the statement is sent. The first statement of a transaction therefore
+   opens it as `BEGIN READ ONLY` and has it verified before any data is read;
+3. an explicit `SHOW transaction_read_only` check when the session opens, before the loader
+   (`load_backtest_bars`: instrument id, OHLCV, adj_close — three SELECTs in one session) runs.
+
+Any failed check (`off`, no answer, an error, a non-read statement, a DBAPI without read-only
+mode) raises before the statement is sent: no data is loaded, the suite does not start, the
+run is `failed` (exit code 1) and the manifest records the reason in `db_access.violation`.
+
+The manifest's `db_access` holds the evidence: `mechanism`, `read_only_confirmed` (true only if
+at least one statement ran and every statement was preceded by `on`), `statements_checked`,
+`checks`, `transaction_read_only_values` and `violation`. A loader that supplies no evidence
+(in-memory bars, tests) is recorded with `read_only_confirmed: false`; a load result whose
+access is not confirmed is never used.
+
+Unit tests use a psycopg-like fake. On the real server (2026-10-13, development database) the
+dedicated engine's connection reported `read_only = True`, the psycopg transaction start
+command `BEGIN READ ONLY`, `SHOW transaction_read_only = on` (with the session default
+`default_transaction_read_only = off`, i.e. the protection comes from the transaction), no
+transaction id assigned, and a non-read statement refused before it was sent.
+
+**Manifest** (`manifest.json`, schema `risk-research-run/2` — runs recorded before this
+change carry `risk-research-run/1` and are not rewritten — written atomically at start and at
+the end): `run_id`; `status` (`running` → `complete` | `failed`; **only `complete` is a
+result** — a run interrupted or unable to write its final manifest stays `running`);
+`started_at`/`completed_at` (UTC); `code` (app version, git commit, branch, dirty flag);
+`environment` (`numpy_version`: the bootstrap uses numpy's PCG64 generator);
+`statistics` (what the point estimates and intervals are, the order-dependent metrics and
+the sparse-event threshold);
+`command`; `selection`; `db_access` (above); `config` (risk version; each selected scenario's full configuration and
+fingerprint; the cost scenario; the effective backtest configuration and fingerprint; slices;
+strategy-engine fingerprint; bootstrap parameters, `validation_config_fingerprint` — the
+existing `ValidationConfig.fingerprint()` of the configuration object passed to the suite,
+covering all its fields including slices and cost scenarios the risk comparisons do not
+use — `family`, `interval_kind`, `compared_metrics`, `order_dependent_metrics`); `input` (symbol, source, rows, first/last
+bar, data fingerprint); `results` (run and row counts, metric columns, comparisons, the
+sessions actually simulated per slice, timings, `intervention_events`,
+`estimates_outside_own_interval`); `artifacts` (path, SHA-256, bytes); `error`.
+No settings, environment values or credentials are recorded.
+
+**Data fingerprint** (`bars-canonical-v1`): SHA-256 over UTF-8 text — a header line
+`bars-canonical-v1|ts|open|high|low|close|volume|adj_close`, then one line per bar in index
+order: the timestamp converted to UTC in ISO-8601, then each column as float64 in Python `repr`
+(shortest round-trip, platform-independent; NaN → `null`), joined by `|`, each line ending in
+`\n`. Bars must be unique and strictly increasing. It identifies exactly the bars handed to the
+suite (any value, bar or timestamp change alters it; column order and index time zone do not).
+Limitations: it covers these six columns only (not the database row ids, `is_closed` — only
+closed bars are loaded — or ingestion metadata); `-0.0` and `0.0` hash differently; database
+`NUMERIC` values are hashed after conversion to float64, as the suite uses them.
+
+The selective mode does not change any formula, scenario or slice; it only chooses which
+pre-declared cases are run and records how.
+
+**Statistical outputs (exploratory).** `risk_comparisons.csv` keeps its original columns and
+order (`slice … seed`) and appends: `bootstrap_median` (median of the finite bootstrap
+differences — far from `estimate` means a biased distribution), `n_finite` (finite samples used;
+non-finite ones are excluded, never imputed), `order_dependent` (true for `max_drawdown`),
+`interval_kind` (`exploratory_block_bootstrap_percentile`), `estimate_in_interval` (false when the
+point estimate falls outside its own interval; empty when undefined) and `note` (the
+order-dependence caveat on max-drawdown rows). No p-values and no multiple-comparison correction
+are computed for the risk overlays; the intervals must not be read as tests.
+
+**Sparse intervention events (descriptive warning).** For each event-driven control in a
+scenario (stop → `stop_triggers`, drawdown lock → `drawdown_lock_events`; a session lock has no
+counter and is reported `not_counted`), `risk_table.csv` appends `event_levels`, `event_counts`
+and `event_warning`, and the manifest lists `results.intervention_events`. Levels: `none` (0
+events: the control's effect is not observed in that window — not evidence that it is
+ineffective), `single` (1), `few` (below the threshold), `several` (at or above it);
+`not_applicable` for scenarios without an event-driven control (sizing and limits act
+continuously). The threshold is a documented convention (`SPARSE_EVENT_THRESHOLD = 5`, recorded
+in `statistics.sparse_event_threshold`, configurable through `execute(...,
+sparse_event_threshold=...)`), not a statistical rule.
 
 ## Point-in-time guarantees (tested)
 

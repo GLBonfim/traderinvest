@@ -69,6 +69,28 @@ Interpretation per metric:
 | max drawdown | **approximate**: path-dependent, block resampling preserves only within-block paths |
 | Sortino | resamples without negative returns are undefined and excluded (`valid_resamples`) |
 
+### Kinds of results (how to read them)
+
+| Kind | What it is | Where it appears |
+|---|---|---|
+| 1. Descriptive point estimate | the metric (or a difference) on the one observed historical path | every table |
+| 2. Exploratory bootstrap interval | percentile interval of a moving-block bootstrap; describes sampling variability under the bootstrap's assumptions, **not** a validated confidence interval | `intervals`/`comparisons` with `family = descriptive`; every risk-overlay comparison (`risk_comparisons.csv`, `interval_kind = exploratory_block_bootstrap_percentile`) |
+| 3. Confidence interval with established validity | coverage demonstrated for the metric and the data-generating assumptions (e.g. by simulation) | **none is claimed** in this project at present |
+| 4. Formal hypothesis test with multiple-comparison correction | pre-declared family, bootstrap p-value, Holm (primary) / BH (secondary) | only the Phase 9 formal family (30 tests, `family = formal`) |
+
+Two cautions apply to kind 2:
+
+- **Order-dependent metrics** (max drawdown): block resampling breaks drawdown paths; the
+  bootstrap distribution need not be centred on the point estimate, and the point estimate can
+  fall outside its own percentile interval. Such intervals are exploratory only.
+- **Path-dependent policies** (drawdown lock, stop): resampling the *realized* returns of a
+  policy is not the same as resampling the *inputs* and re-running the policy. The realized
+  zero-return (flat) periods of a lock stay where they were and no longer coincide with the
+  resampled drawdowns, so the interval describes the variability of the two realized return
+  streams, not of the policy's effect. Re-running the policy on resampled inputs is a different
+  (and much more expensive) method, with its own limits (block resampling also breaks the
+  crashes that trigger the policy).
+
 ## Comparisons
 
 All differences are `a − b` of the same metric on the **same resampled sessions**.

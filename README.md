@@ -191,10 +191,13 @@ uv run python -m app.ml.cli run --symbol SPY
 
 Protocol, features, split and results: [docs/machine-learning.md](docs/machine-learning.md).
 
-Risk overlays on the baselines (measurement only; ~60 s; CSV in git-ignored `data/risk/`):
+Risk overlays on the baselines (measurement only; full suite ~60 s; each run writes a new
+`data/risk/<run_id>/` with `manifest.json` and CSV, git-ignored):
 
 ```bash
-uv run python -m app.risk.cli run --symbol SPY
+uv run python -m app.risk.cli run --symbol SPY                 # full suite (6 x 6 x 3)
+uv run python -m app.risk.cli run --symbol SPY --strategy sma_trend \
+    --scenario control_no_overlay atr_stop_3 --cost D --slice full   # only the selected cases
 ```
 
 Architecture, formulas, stop/OHLC conventions and results: [docs/risk-management.md](docs/risk-management.md).

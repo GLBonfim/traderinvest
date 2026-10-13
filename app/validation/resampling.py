@@ -14,6 +14,8 @@ candidate blocks (edge under-representation).
 Randomness: numpy PCG64 generator seeded with the configured seed (deterministic).
 """
 
+from dataclasses import dataclass
+
 import numpy as np
 
 
@@ -43,6 +45,27 @@ def percentile_interval(samples: np.ndarray, confidence: float) -> tuple[float, 
     alpha = 1 - confidence
     lo, hi = np.quantile(finite, [alpha / 2, 1 - alpha / 2])
     return float(lo), float(hi), int(finite.size)
+
+
+@dataclass(frozen=True)
+class BootstrapSummary:
+    """Percentile interval plus the diagnostics needed to judge it: the median of the finite
+    samples (a median far from the point estimate reveals a biased distribution), and how many
+    of the `n_total` samples were finite (non-finite samples are excluded, never imputed)."""
+
+    lower: float
+    upper: float
+    median: float
+    n_finite: int
+    n_total: int
+
+
+def bootstrap_summary(samples: np.ndarray, confidence: float) -> BootstrapSummary:
+    """`percentile_interval` (unchanged) + median and counts. All NaN when no sample is finite."""
+    lo, hi, n_finite = percentile_interval(samples, confidence)
+    finite = samples[np.isfinite(samples)]
+    median = float(np.median(finite)) if n_finite else float("nan")
+    return BootstrapSummary(lo, hi, median, n_finite, int(samples.size))
 
 
 def centered_p_value(samples: np.ndarray, estimate: float) -> float:
