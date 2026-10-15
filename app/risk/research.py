@@ -353,11 +353,11 @@ def event_controls(risk: RiskConfig) -> list[tuple[str, str | None]]:
     """(control, diagnostics counter) for each event-driven control enabled in `risk`."""
     out: list[tuple[str, str | None]] = []
     if risk.stop.method != "none":
-        out.append(("stop", "stop_triggers"))
+        out.append(("stop", "stop_activations"))  # ADR-0034 D-A1: one event per episode
     if risk.drawdown.enabled:
         out.append(("drawdown_lock", "drawdown_lock_events"))
     if risk.session.enabled:
-        out.append(("session_lock", None))  # no event counter in the risk diagnostics
+        out.append(("session_lock", "session_lock_events"))  # ADR-0034 D-A8
     return out
 
 
@@ -436,7 +436,11 @@ def effective_config(sel: Selection, validation: ValidationConfig) -> dict[str, 
     return {
         "risk_version": RISK_VERSION,
         "risk_scenarios": {
-            s.name: {"fingerprint": s.fingerprint(), "config": dataclasses.asdict(s)}
+            s.name: {
+                "fingerprint": s.fingerprint(),
+                "config": dataclasses.asdict(s),
+                "semantics": s.semantics(),  # ADR-0034 per-mechanism versions (additive)
+            }
             for s in sel.scenarios
         },
         "cost_scenario": dataclasses.asdict(sel.cost),

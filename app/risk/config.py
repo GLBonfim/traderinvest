@@ -9,6 +9,12 @@ import json
 from dataclasses import asdict, dataclass, field
 
 RISK_VERSION = "1.0.0"
+# ADR-0034 per-mechanism semantic versions. Only the ENABLED mechanisms of a profile enter its
+# fingerprint (see `RiskConfig.semantics`), so a profile without a stop, a drawdown lock or a
+# session lock keeps its fingerprint byte for byte. "1.0.0" is the pre-ADR-0034 semantics.
+STOP_SEMANTICS = "2.0.0"  # D-A3: an entry needing an undefined ATR stop is refused
+DRAWDOWN_SEMANTICS = "2.0.0"  # D-A2: lock / warning by direct comparison with the level
+SESSION_SEMANTICS = "1.0.0"  # unchanged for valid inputs (D-A5 only fails or defines edge cases)
 SIZING_METHODS = ("full", "fixed_fraction", "volatility_target", "atr_risk")
 STOP_METHODS = ("none", "fixed_pct", "atr")
 LOCK_ACTIONS = ("force_flat", "block_entries")
@@ -46,10 +52,12 @@ class StopSpec:
 
 @dataclass(frozen=True)
 class DrawdownSpec:
-    """drawdown = equity / high-water mark - 1 (HWM includes initial capital), at the close.
-    WARNING when drawdown <= -warning; LOCKED when <= -lock. While LOCKED: `force_flat` exits
-    and blocks entries, `block_entries` keeps the position but blocks increases. The lock
-    lasts `cooldown_sessions` decisions, then unlocks and resets the HWM to current equity."""
+    """drawdown = equity / high-water mark - 1 (HWM includes initial capital), at the close
+    (reported). The state compares the equity with the LEVEL (ADR-0034 D-A2): WARNING when
+    equity <= HWM x (1 - warning); LOCKED when equity <= HWM x (1 - lock). While LOCKED:
+    `force_flat` exits and blocks entries, `block_entries` keeps the position but blocks
+    increases. The lock lasts `cooldown_sessions` decisions, then unlocks and resets the HWM to
+    current equity (at equity 0 the last positive HWM is kept and the account relocks)."""
 
     enabled: bool = False
     warning: float = 0.10
@@ -120,8 +128,23 @@ class RiskConfig:
         if not 0 <= self.rebalance_band < 1:
             raise ValueError("rebalance_band must be in [0, 1)")
 
+    def semantics(self) -> dict[str, str]:
+        """Semantic versions of the event-driven mechanisms this profile ENABLES (ADR-0034)."""
+        out: dict[str, str] = {}
+        if self.stop.method != "none":
+            out["stop"] = STOP_SEMANTICS
+        if self.drawdown.enabled:
+            out["drawdown"] = DRAWDOWN_SEMANTICS
+        if self.session.enabled:
+            out["session"] = SESSION_SEMANTICS
+        return out
+
     def fingerprint(self) -> str:
-        payload = json.dumps({"risk": RISK_VERSION, **asdict(self)}, sort_keys=True, default=str)
+        semantics = self.semantics()
+        body = {"risk": RISK_VERSION, **asdict(self)}
+        if semantics:  # only when a mechanism is enabled: other payloads are unchanged
+            body["semantics"] = semantics
+        payload = json.dumps(body, sort_keys=True, default=str)
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 

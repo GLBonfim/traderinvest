@@ -1,8 +1,9 @@
 """Daily net-return artifacts of a risk research run, and a read-only run verifier.
 
-`daily_returns.csv` (schema `risk-daily-returns/1`) holds, for every (slice, strategy, risk
-scenario) of ONE run, the per-session series the suite actually produced — taken from
-`RiskRun.equity`, never reconstructed from aggregate metrics:
+`daily_returns.csv` (schema `risk-daily-returns/2`; runs written before ADR-0034 step 4b carry
+`risk-daily-returns/1`, still verified and read under its own contract) holds, for every
+(slice, strategy, risk scenario) of ONE run, the per-session series the suite actually
+produced — taken from `RiskRun.equity`, never reconstructed from aggregate metrics:
 
     slice,strategy,scenario,cost_scenario,session,ts,equity,daily_return,position,costs
 
@@ -18,7 +19,12 @@ scenario) of ONE run, the per-session series the suite actually produced — tak
 - a session without a position is an ordinary row (position 0; return 0 unless costs were
   paid that session); there are no missing sessions inside a series;
 - floats are written with Python `repr` (shortest round-trip, lossless for float64);
-  non-finite values are written explicitly as `nan`, `inf`, `-inf` and never imputed.
+  non-finite values are written explicitly as `nan`, `inf`, `-inf` and never imputed;
+- schema /2 only: an UNDEFINED return (ADR-0034 D-A5: previous equity 0) is the explicit token
+  `null` in `daily_return` — never 0, NaN, ±inf or an estimate; a close that reaches 0 from a
+  positive equity is a defined -1. The manifest counts them per series (`undefined_returns`);
+  the verifier accepts a null only where the previous recorded equity is 0, and
+  `load_returns_matrix` refuses a series containing one. Schema /1 has no null token.
 
 `verify_run()` checks a run directory WITHOUT modifying anything and never raises: it first
 validates the manifest's structure for its schema version, then artifact names (plain file
@@ -41,13 +47,17 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from app.backtest.config import BacktestConfig
+from app.backtest.metrics import undefined_mask
 from app.risk.diagnostics import COMPARED_METRICS
 
 RETURNS_FILE = "daily_returns.csv"
-RETURNS_SCHEMA = "risk-daily-returns/1"
+RETURNS_SCHEMA_V1 = "risk-daily-returns/1"
+RETURNS_SCHEMA = "risk-daily-returns/2"  # written by new runs (ADR-0034 step 4b)
+NULL = "null"  # schema /2: an undefined return (previous equity 0)
 RETURNS_COLUMNS = (
     "slice",
     "strategy",
@@ -61,12 +71,16 @@ RETURNS_COLUMNS = (
     "costs",
 )
 SERIES_COLUMNS = ("equity", "daily_return", "position", "costs")  # taken from RiskRun.equity
-RETURN_CONVENTION = (
+RETURN_CONVENTION_V1 = (
     "daily_return = equity(t)/equity(t-1) - 1, equity(-1) = backtest initial capital; equity = "
     "cash + shares x raw close after the open fill of t; costs of the cost scenario deducted "
     "from cash at the fill (net returns); raw prices, no dividends; floats in Python repr; "
     "non-finite values written as nan/inf/-inf, never imputed"
 )
+RETURN_CONVENTION = RETURN_CONVENTION_V1 + (
+    "; daily_return is null (undefined, never 0 or imputed) where equity(t-1) = 0"
+)
+CONVENTIONS = {RETURNS_SCHEMA_V1: RETURN_CONVENTION_V1, RETURNS_SCHEMA: RETURN_CONVENTION}
 MANIFEST = "manifest.json"
 TABLE_FILE = "risk_table.csv"  # = research.TABLE (not imported: research imports this module)
 COMPARISONS_FILE = "risk_comparisons.csv"  # = research.COMPARISONS
@@ -134,9 +148,10 @@ class SeriesInfo:
     rows: int
     first_ts: str | None
     last_ts: str | None
-    non_finite_returns: int
+    non_finite_returns: int  # nan / inf / -inf (an undefined return is not counted here)
     risk_fingerprint: str
     backtest_fingerprint: str
+    undefined_returns: int = 0  # schema /2: null returns (previous equity 0)
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -167,10 +182,18 @@ def build_returns(
         if not idx.is_unique or not idx.is_monotonic_increasing:
             raise ValueError(f"series {key} is not strictly increasing in time")
         ts = [t.isoformat() for t in idx.tz_convert("UTC")]
-        cols = {c: eq[c].to_numpy("float64") for c in SERIES_COLUMNS}
+        cols = {c: eq[c].to_numpy("float64", na_value=math.nan) for c in SERIES_COLUMNS}
+        undefined = undefined_mask(eq["daily_return"])
+        for c in SERIES_COLUMNS:
+            if c != "daily_return" and undefined_mask(eq[c]).any():
+                raise ValueError(f"series {key} has undefined values in {c}")
         for i, t in enumerate(ts):
-            w.writerow((*key, cost_scenario, i, t, *(fmt(cols[c][i]) for c in SERIES_COLUMNS)))
-        rets = cols["daily_return"]
+            values = [
+                NULL if c == "daily_return" and undefined[i] else fmt(cols[c][i])
+                for c in SERIES_COLUMNS
+            ]
+            w.writerow((*key, cost_scenario, i, t, *values))
+        rets = cols["daily_return"][~undefined]
         infos.append(
             SeriesInfo(
                 *key,
@@ -181,6 +204,7 @@ def build_returns(
                 non_finite_returns=int(sum(not math.isfinite(float(r)) for r in rets)),
                 risk_fingerprint=str(getattr(run, "risk_fingerprint", "")),
                 backtest_fingerprint=str(getattr(run, "backtest_fingerprint", "")),
+                undefined_returns=int(undefined.sum()),
             )
         )
     return buf.getvalue(), infos
@@ -226,7 +250,12 @@ def write_new_atomic(path: Path, text: str) -> None:
 
 def parse_returns(data: bytes, name: str = RETURNS_FILE) -> pd.DataFrame:
     """Long table from the exact bytes of a returns file; every row is validated on its own
-    (values lossless, canonical timestamps, integer sessions). Raises ValueError."""
+    (values lossless, canonical timestamps, integer sessions). Raises ValueError.
+
+    The token `null` is accepted in `daily_return` only (an undefined return of schema /2); the
+    column is then a nullable `Float64` with `pd.NA` there, otherwise plain float64 as in /1.
+    Whether a null is allowed at all (never in /1) and where (previous equity 0) is checked by
+    the verifier, which knows the schema."""
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -236,6 +265,7 @@ def parse_returns(data: bytes, name: str = RETURNS_FILE) -> pd.DataFrame:
         raise ValueError(f"{name}: unexpected header")
     records: list[dict[str, Any]] = []
     stamps: list[pd.Timestamp] = []
+    nulls: list[int] = []
     for n, r in enumerate(rows[1:], start=2):
         if len(r) != len(RETURNS_COLUMNS):
             raise ValueError(f"{name} line {n}: {len(r)} fields")
@@ -246,11 +276,20 @@ def parse_returns(data: bytes, name: str = RETURNS_FILE) -> pd.DataFrame:
         try:
             stamps.append(parse_ts(rec["ts"]))
             for c in SERIES_COLUMNS:
-                rec[c] = parse(rec[c])
+                if c == "daily_return" and rec[c] == NULL:
+                    rec[c] = 0.0  # placeholder under the mask below, never read as a value
+                    nulls.append(len(records))
+                else:
+                    rec[c] = parse(rec[c])
         except ValueError as exc:
             raise ValueError(f"{name} line {n}: {exc}") from exc
         records.append(rec)
     frame = pd.DataFrame.from_records(records, columns=list(RETURNS_COLUMNS))
+    if nulls:
+        mask = np.zeros(len(frame), dtype=bool)
+        mask[nulls] = True
+        values = frame["daily_return"].to_numpy(np.float64)
+        frame["daily_return"] = pd.arrays.FloatingArray(values, mask)
     frame["ts"] = pd.DatetimeIndex(stamps, tz="UTC") if stamps else pd.DatetimeIndex([], tz="UTC")
     return frame
 
@@ -298,6 +337,13 @@ def load_returns_matrix(
         if index is not None and not idx.equals(index):
             raise ReturnsMatrixError(f"series {sc} is not aligned with {names[0]}")
         index = idx
+        n_undefined = int(undefined_mask(part["daily_return"]).sum())
+        if n_undefined:
+            raise ReturnsMatrixError(
+                f"series {(slice_name, strategy, sc)} has {n_undefined} undefined daily "
+                "return(s) (previous equity 0): not usable as a complete series (no session is "
+                "dropped and no value imputed)"
+            )
         cols[sc] = part["daily_return"].to_numpy()
     return pd.DataFrame(cols, index=index)
 
@@ -449,6 +495,8 @@ def _structure(m: Any, problems: list[str]) -> None:
                 _need(s, k, _is_str, where, problems)
             _need(s, "rows", lambda v: _is_int(v) and v >= 0, where, problems)
             _need(s, "non_finite_returns", lambda v: _is_int(v) and v >= 0, where, problems)
+            if b.get("schema") == RETURNS_SCHEMA:
+                _need(s, "undefined_returns", lambda v: _is_int(v) and v >= 0, where, problems)
             _need(s, "first_ts", _opt_str, where, problems)
             _need(s, "last_ts", _opt_str, where, problems)
 
@@ -633,12 +681,13 @@ def _check_returns(m: dict[str, Any], data: bytes, rep: VerifyReport) -> pd.Data
     sel, cfg, res = m["selection"], m["config"], m["results"]
     block = res["daily_returns"]
     p = rep.problems
-    if block["schema"] != RETURNS_SCHEMA or block["path"] != RETURNS_FILE:
+    schema = block["schema"]
+    if schema not in CONVENTIONS or block["path"] != RETURNS_FILE:
         p.append(f"daily_returns: unexpected schema/path {block['schema']!r}/{block['path']!r}")
         return None
     if block["columns"] != list(RETURNS_COLUMNS):
         p.append("daily_returns.columns differ from the schema")
-    if block["convention"] != RETURN_CONVENTION:
+    if block["convention"] != CONVENTIONS[schema]:
         p.append("daily_returns.convention differs from the schema's convention")
     base = cfg["backtest"]["config"]
     initial = base.get("initial_capital")
@@ -703,15 +752,24 @@ def _check_returns(m: dict[str, Any], data: bytes, rep: VerifyReport) -> pd.Data
             p.append(f"{k}: sessions not strictly increasing")
         if list(part["session"]) != list(range(len(part))):
             p.append(f"{k}: session numbers are not 0..n-1")
-        rets, eq = part["daily_return"].to_numpy(), part["equity"].to_numpy()
+        undefined = undefined_mask(part["daily_return"])
+        rets = part["daily_return"].to_numpy(np.float64, na_value=math.nan)
+        eq = part["equity"].to_numpy(np.float64)
         first, last = ts[0].isoformat(), ts[-1].isoformat()
+        if undefined.any() and schema != RETURNS_SCHEMA:
+            p.append(f"{k}: null returns are not part of schema {schema}")
         info = listed.get(k)
         if info is not None:
-            got = (len(part), first, last, cost, int(sum(not math.isfinite(r) for r in rets)))
+            non_finite = int(sum(not math.isfinite(r) for r in rets[~undefined]))
+            got = (len(part), first, last, cost, non_finite)
             want = (info["rows"], info["first_ts"], info["last_ts"], info["cost_scenario"],
                     info["non_finite_returns"])  # fmt: skip
             if got != want:
                 p.append(f"{k}: rows/dates/cost/non-finite {got} differ from the manifest {want}")
+            n_undefined = int(undefined.sum())
+            if schema == RETURNS_SCHEMA and n_undefined != info.get("undefined_returns"):
+                p.append(f"{k}: {n_undefined} undefined returns differ from the manifest "
+                         f"{info.get('undefined_returns')}")  # fmt: skip
             risk = cfg["risk_scenarios"].get(k[2], {})
             if info["risk_fingerprint"] != risk.get("fingerprint"):
                 p.append(f"{k}: risk_fingerprint differs from config.risk_scenarios.{k[2]}")
@@ -726,6 +784,14 @@ def _check_returns(m: dict[str, Any], data: bytes, rep: VerifyReport) -> pd.Data
             p.append(f"{k}: sessions/dates differ from results.windows.{k[0]}")
         prev = [float(initial), *eq[:-1]]
         for i, (r, e, q) in enumerate(zip(rets, eq, prev, strict=True)):
+            if undefined[i]:  # a null is valid only where the previous equity is 0
+                if q != 0:
+                    p.append(f"{k}: null return at session {i} with a non-zero previous equity")
+                    break
+                continue
+            if q == 0:  # equity(t-1) = 0: the return is undefined, never a number
+                p.append(f"{k}: return at session {i} is a number but the previous equity is 0")
+                break
             if not all(math.isfinite(v) for v in (r, e, q)):
                 continue  # non-finite values are counted above, never recomputed
             if not math.isclose(r, e / q - 1, rel_tol=RETURN_TOLERANCE, abs_tol=1e-15):

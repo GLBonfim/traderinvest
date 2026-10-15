@@ -11,11 +11,18 @@ For one completed session t (`process(bar)`), in order — the Phase 8/11 tempor
   4. snapshot of the account (with the pending kind just created).
 Only the observation of bar t (`BarInput`) and state carried from earlier sessions are read.
 A decision is never executed on the bar that produced it. The strategy state is never modified.
+
+Window start (convention A, `prime`): a NEW account whose first result session is `start`
+first decides at the close of the session before it (request rebuilt from the history, fresh
+capital, monitors untouched), so that decision executes at the first open of the window, as
+in the research engine (`RiskOverlay.run(start_index=k)`). Its decision and reference
+snapshot are ledger records only, never a result session.
 """
 
 import hashlib
 import math
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 import pandas as pd
@@ -38,6 +45,7 @@ from app.paper.models import (
     Reconciliation,
     session_tag,
 )
+from app.risk.limits import check_equity
 from app.risk.manager import RiskManager
 from app.strategies.base import FLAT, INSUFFICIENT_DATA, LONG
 
@@ -55,6 +63,7 @@ TRADE_COLUMNS = (
     "net_return",
     "holding_sessions",
     "fills",
+    "exit_causes",  # ADR-0034 D-A1: causes of the decision that produced the exit order
 )
 
 
@@ -147,6 +156,25 @@ def requested_target(state: str, previous: float) -> float:
     raise ValueError(f"unknown strategy state {state!r}")
 
 
+def _ny_date(ts: pd.Timestamp) -> date:
+    return pd.Timestamp(ts).tz_convert("America/New_York").date()
+
+
+def split_at_start(inputs: list[BarInput], start: date) -> tuple[list[BarInput], list[BarInput]]:
+    """Convention A for a NEW account starting at `start` (the first result session):
+    returns (history, window). `window` holds the sessions from `start`; `history` the
+    sessions before it, for `PaperTrader.prime`, and only once its last session is the one
+    before the window (its decision is due at or after `start`); otherwise it is empty and
+    nothing is decided yet. Without any earlier session there is no previous decision."""
+    history = [b for b in inputs if _ny_date(b.bar_ts) < start]
+    window = [b for b in inputs if _ny_date(b.bar_ts) >= start]
+    if history and _ny_date(history[-1].effective_at) < start:
+        if window:
+            raise ValueError("missing session in data before the window start")
+        history = []
+    return history, window
+
+
 def classify_pending(target: float, account: Account, close: float, band: float) -> str:
     holding = account.holding
     if target <= EPS:
@@ -169,7 +197,10 @@ class PaperTrader:
         approved_targets: dict[pd.Timestamp, float] | None = None,
     ) -> None:
         if state.config_fingerprint != config.fingerprint():
-            raise ValueError("paper state was created with a different configuration")
+            raise ValueError(
+                "paper state was created with a different configuration (another profile or "
+                "parameters, or another risk-mechanism semantic version: ADR-0034)"
+            )
         self.config = config
         self.state = state
         self.broker = PaperBroker(config, state.account)
@@ -251,7 +282,9 @@ class PaperTrader:
                 round_trip_pnl: float | None = None
                 if not acct.holding:
                     round_trip_pnl = acct.cash - ot["entry_equity"]  # Phase 11 definition
-                    trade = self._close_trade(ot, bar.bar_ts, fill.price, st.session_seq)
+                    trade = self._close_trade(
+                        ot, bar.bar_ts, fill.price, st.session_seq, ins.exit_causes
+                    )
                     st.open_trade = None
                 rm.on_fill(
                     target=ins.risk_approved_target,
@@ -268,14 +301,84 @@ class PaperTrader:
 
         # 2. CLOSE of t: valuation, monitors, close-based stop
         equity = acct.equity(bar.close)
-        exposure = acct.shares * bar.close / equity
+        check_equity(equity)  # D-A5: invalid state fails before any record is built
+        exposure = acct.shares * bar.close / equity if equity > 0 else 0.0
         triggered, touch = rm.on_close(
             equity, low=float(bar.low), close=float(bar.close), holding=acct.holding
         )
 
-        # 3. DECISION at the close of t
+        # 3. DECISION at the close of t; 4. snapshot at the close (after the decision)
+        decision, instruction, snapshot = self._decide(bar, equity, exposure, triggered, touch)
+        st.session_seq += 1
+        return StepResult(
+            bar.bar_ts,
+            order,
+            fill,
+            recon,
+            decision,
+            instruction,
+            snapshot,
+            trade,
+            executed,
+            traded,
+            cost_today,
+            equity,
+            exposure,
+        )
+
+    def prime(self, history: list[BarInput]) -> StepResult:
+        """Window start (convention A, as the research engine's `start_index`): the decision
+        at the close of the session before the window, made by a NEW account from the history
+        before the window. The requested target is rebuilt causally from every strategy state
+        of `history` (INSUFFICIENT_DATA keeps the previous request); nothing else is inherited:
+        initial capital, no position, cost basis or stop. Risk monitors are NOT updated. The
+        result holds the decision (its Instruction is pending for the first window open) and a
+        reference snapshot of the flat account at that close, recorded for ledger traceability
+        and execution only: it is not a result session (`session_seq` stays 0)."""
+        st = self.state
+        if st.last_session is not None or st.pending is not None or st.session_seq:
+            raise ValueError("only a new account can be started from a previous decision")
+        if not history:
+            raise ValueError("no previous session to decide on")
+        idx = pd.DatetimeIndex([b.bar_ts for b in history])
+        if not idx.is_monotonic_increasing or not idx.is_unique:
+            raise ValueError("sessions must be processed in strictly increasing time order")
+        bar = history[-1]
+        if not bar.observed_at < bar.effective_at:
+            raise ValueError("effective_at must be after the decision close")
+        previous = st.last_requested
+        for b in history[:-1]:
+            previous = requested_target(b.strategy_state, previous)
+        st.last_requested = previous
+        equity = st.account.cash  # flat account: the initial capital (no valuation, no monitors)
+        decision, instruction, snapshot = self._decide(bar, equity, 0.0, False, False)
+        return StepResult(
+            bar.bar_ts,
+            None,
+            None,
+            None,
+            decision,
+            instruction,
+            snapshot,
+            None,
+            False,
+            0.0,
+            0.0,
+            equity,
+            0.0,
+        )
+
+    def _decide(
+        self, bar: BarInput, equity: float, exposure: float, triggered: bool, touch: bool
+    ) -> tuple[Decision, Instruction, AccountSnapshot]:
+        """Decision at the close of `bar` (Instruction pending for the next open) and the
+        account snapshot after it. Advances the decision progress, never `session_seq`."""
+        st, acct, rm = self.state, self.state.account, self.state.risk
+        band = self.config.risk.rebalance_band
+        acct_id = st.account_id
         requested = requested_target(bar.strategy_state, st.last_requested)
         st.last_requested = requested
+        activation, causes = False, ""  # the gross shadow replays targets: no decision
         if self._approved_targets is not None:
             approved = self._approved_targets[bar.bar_ts]
             reasons, intervention, risk_state = "", False, rm.risk_state
@@ -288,9 +391,11 @@ class PaperTrader:
                 equity=equity,
                 triggered=triggered,
                 touch=touch,
+                strategy_state=bar.strategy_state,
             )
             approved, reasons = d.approved_exposure, ";".join(d.reasons)
             intervention, risk_state = d.intervention, d.risk_state
+            activation, causes = d.stop_activation, d.exit_causes
         kind = classify_pending(approved, acct, float(bar.close), band)
         decision_id = f"{acct_id}-D{session_tag(bar.bar_ts)}"
         input_fp = bar.fingerprint()
@@ -313,6 +418,8 @@ class PaperTrader:
             kind,
             st.config_fingerprint,
             input_fp,
+            activation,
+            causes,
         )
         instruction = Instruction(
             decision_id,
@@ -322,10 +429,10 @@ class PaperTrader:
             approved,
             kind,
             float(bar.atr),
+            causes,
         )
         st.pending = instruction
 
-        # 4. snapshot at the close (after the decision)
         unrealized = acct.unrealized_pnl(float(bar.close))
         snapshot = AccountSnapshot(
             f"{acct_id}-S{session_tag(bar.bar_ts)}",
@@ -345,25 +452,10 @@ class PaperTrader:
             rm.risk_state,
             kind,
         )
-        st.session_seq += 1
         st.last_session = bar.bar_ts
         st.last_decision_id = decision_id
         st.last_input_fingerprint = input_fp
-        return StepResult(
-            bar.bar_ts,
-            order,
-            fill,
-            recon,
-            decision,
-            instruction,
-            snapshot,
-            trade,
-            executed,
-            traded,
-            cost_today,
-            equity,
-            exposure,
-        )
+        return decision, instruction, snapshot
 
     # ── helpers ──
 
@@ -386,7 +478,12 @@ class PaperTrader:
         )
 
     def _close_trade(
-        self, ot: dict[str, Any], exit_time: pd.Timestamp, exit_price: float, seq: int
+        self,
+        ot: dict[str, Any],
+        exit_time: pd.Timestamp,
+        exit_price: float,
+        seq: int,
+        exit_causes: str,
     ) -> dict[str, Any]:
         """Round trip flat -> flat. Same formulas and operation order as the Phase 8 `Trade`
         (single entry/exit: identical values); with adds/reductions, notionals are summed."""
@@ -409,6 +506,7 @@ class PaperTrader:
             "net_return": net / committed if committed > 0 else math.nan,
             "holding_sessions": seq - ot["entry_seq"],
             "fills": ot["fills"],
+            "exit_causes": exit_causes,
         }
         st.trade_count += 1
         return trade

@@ -5,7 +5,9 @@ Every rule is an explicit condition on recorded values (no model, no free-form j
                   volatility(T) == extreme != volatility(T-1)  -> REGIME_VOLATILITY_EXTREME
     strategy      (state(T-1), state(T)) in TRANSITIONS          -> STRATEGY_STATE_CHANGED
     risk          intervention category changes into reduced/blocked; risk_state transitions
-                  NORMAL->WARNING, ->LOCKED, LOCKED->other; "stop_triggered" in the reasons
+                  NORMAL->WARNING, ->LOCKED, LOCKED->other; a stop activation
+                  (`stop_activation`, ADR-0034 D-A1; records without it: "stop_triggered"
+                  in the reasons)
     paper         decision pending_kind entry/exit/rebalance; fill; rejected order
     safety        snapshot invariants (cash >= 0, quantity >= 0, exposure <= 1,
                   total P&L == equity - initial within tolerance)
@@ -277,7 +279,14 @@ def paper_alerts(
                         )
                     )
             last_state = state
-            if report and "stop_triggered" in str(rec["intervention_reason"]).split(";"):
+            # ADR-0034 D-A1: one alert per stop ACTIVATION (first condition of the position
+            # episode) on records that carry `stop_activation`; older records (no such field)
+            # keep the former rule, so recomputing alerts over history creates no new alert
+            if "stop_activation" in rec:
+                stop_alert = bool(rec["stop_activation"])
+            else:
+                stop_alert = "stop_triggered" in str(rec["intervention_reason"]).split(";")
+            if report and stop_alert:
                 out.append(
                     make_alert(
                         "RISK_STOP_TRIGGERED",

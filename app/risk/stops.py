@@ -18,7 +18,9 @@ from app.risk.config import StopSpec
 
 def stop_level(spec: StopSpec, *, entry_price: float, atr_at_decision: float) -> float:
     """Level set once, at entry. ATR is the value known at the entry decision (close before
-    the entry fill). NaN when no stop applies or the ATR is undefined (reported, not guessed)."""
+    the entry fill). NaN when no stop applies. An undefined ATR is never guessed: since
+    ADR-0034 D-A3 `RiskManager.decide` refuses such an entry (`stop_input_undefined`), so an
+    ATR-stop position is never opened without a level."""
     if spec.method == "none":
         return math.nan
     if spec.method == "fixed_pct":

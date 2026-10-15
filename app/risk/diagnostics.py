@@ -25,6 +25,7 @@ import pandas as pd
 
 from app.backtest.config import BacktestConfig
 from app.backtest.engine import session_times
+from app.backtest.metrics import return_metric_status, undefined_mask
 from app.data.calendar import TradingCalendar
 from app.indicators.engine import IndicatorEngine
 from app.risk.config import RISK_VERSION, SCENARIOS, RiskConfig
@@ -84,7 +85,13 @@ class RiskSuiteReport:
             }
             for (s, st, sc), r in self.runs.items()
         ]
-        return pd.DataFrame(rows)
+        table = pd.DataFrame(rows)
+        # appended after every existing column: why a return-based metric is missing
+        # (ADR-0034 D-A5, step 4b.1); set from the metrics, never from the cell
+        status = [return_metric_status(r.metrics) for r in self.runs.values()]
+        for col in status[0] if status else ():
+            table[col] = [st[col] for st in status]
+        return table
 
 
 def run_risk_suite(
@@ -151,17 +158,30 @@ def _compare(
     out: list[dict[str, Any]] = []
     strategies = sorted({st for (s, st, _) in report.runs if s == slice_name})
     for sid in strategies:
-        cols = {sc: report.runs[(slice_name, sid, sc)].equity["daily_return"] for sc in scenarios}
-        r = pd.DataFrame(cols).to_numpy(np.float64)
-        idx = moving_block_indices(r.shape[0], v.block_length, v.n_resamples, v.seed)
-        point = matrix_metrics(r, v.periods_per_year)
+        series = {sc: report.runs[(slice_name, sid, sc)].equity["daily_return"] for sc in scenarios}
+        # D-A5: a series with an undefined return is never used as a complete series (no
+        # session dropped, no value imputed); its comparisons are reported as not testable.
+        undefined = [sc for sc in scenarios if undefined_mask(series[sc]).any()]
+        usable = (
+            [sc for sc in scenarios if sc not in undefined] if scenarios[0] not in undefined else []
+        )
         keys = COMPARED_METRICS
-        boot = {k: np.empty((v.n_resamples, len(scenarios))) for k in keys}
-        for b in range(v.n_resamples):
-            m = matrix_metrics(r[idx[b]], v.periods_per_year)
-            for k in keys:
-                boot[k][b] = m[k]
-        for j, sc in enumerate(scenarios[1:], start=1):
+        if usable:
+            cols = {sc: series[sc].to_numpy(np.float64, na_value=np.nan) for sc in usable}
+            r = pd.DataFrame(cols).to_numpy(np.float64)
+            idx = moving_block_indices(r.shape[0], v.block_length, v.n_resamples, v.seed)
+            point = matrix_metrics(r, v.periods_per_year)
+            boot = {k: np.empty((v.n_resamples, len(usable))) for k in keys}
+            for b in range(v.n_resamples):
+                m = matrix_metrics(r[idx[b]], v.periods_per_year)
+                for k in keys:
+                    boot[k][b] = m[k]
+        for sc in scenarios[1:]:
+            if sc not in usable:
+                which = [x for x in (scenarios[0], sc) if x in undefined]
+                out += [_not_testable(slice_name, sid, sc, scenarios[0], k, which, v) for k in keys]
+                continue
+            j = usable.index(sc)
             for k in keys:
                 bs = bootstrap_summary(boot[k][:, j] - boot[k][:, 0], v.confidence)
                 estimate = float(point[k][j] - point[k][0])
@@ -195,3 +215,36 @@ def _compare(
                     }
                 )
     return out
+
+
+NOT_TESTABLE_NOTE = (
+    "not testable: undefined daily return(s) in {which} (previous equity 0); no session "
+    "dropped, no value imputed"
+)
+
+
+def _not_testable(
+    slice_name: str, sid: str, sc: str, vs: str, metric: str, which: list[str], v: ValidationConfig
+) -> dict[str, Any]:
+    """A comparison row that is not computed (same columns as a computed row)."""
+    nan = float("nan")
+    return {
+        "slice": slice_name,
+        "strategy": sid,
+        "scenario": sc,
+        "vs": vs,
+        "metric": metric,
+        "estimate": nan,
+        "lower": nan,
+        "upper": nan,
+        "family": "descriptive",
+        "block_length": v.block_length,
+        "n_resamples": v.n_resamples,
+        "seed": v.seed,
+        "bootstrap_median": nan,
+        "n_finite": 0,
+        "order_dependent": metric in ORDER_DEPENDENT_METRICS,
+        "interval_kind": INTERVAL_KIND,
+        "estimate_in_interval": None,
+        "note": NOT_TESTABLE_NOTE.format(which=" and ".join(which)),
+    }

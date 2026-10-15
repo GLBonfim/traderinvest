@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 
 from app.risk import cli, diagnostics, research
-from app.risk.config import SCENARIOS, DrawdownSpec, RiskConfig, StopSpec
+from app.risk.config import SCENARIOS, DrawdownSpec, RiskConfig, SessionSpec, StopSpec
 from app.risk.diagnostics import METRIC_KEYS, RiskSuiteReport
 from app.risk.engine import RiskRun
 from app.validation.config import ValidationConfig
@@ -137,7 +137,10 @@ def test_event_controls_follow_the_effective_configuration() -> None:
     controls = {s.name: research.event_controls(s) for s in SCENARIOS}
     assert controls["control_no_overlay"] == [] and controls["fixed_fraction_50"] == []
     assert controls["drawdown_lock_20"] == [("drawdown_lock", "drawdown_lock_events")]
-    assert controls["atr_stop_3"] == [("stop", "stop_triggers")]
+    # ADR-0034 D-A1/D-A8: a stop event is an ACTIVATION (one per position episode)
+    assert controls["atr_stop_3"] == [("stop", "stop_activations")]
+    session = RiskConfig("s", session=SessionSpec(enabled=True))
+    assert research.event_controls(session) == [("session_lock", "session_lock_events")]
     assert controls["volatility_target_10"] == [] and controls["atr_risk_1pct"] == []
 
 
@@ -148,9 +151,9 @@ def test_event_rows_and_table_columns_for_zero_one_and_several_events() -> None:
     r = np.zeros(10)
     report.runs[("full", "s", "control_no_overlay")] = run_with(r)
     report.runs[("full", "s", "drawdown_lock_20")] = run_with(r, diag={"drawdown_lock_events": 0})
-    report.runs[("full", "s", "atr_stop_3")] = run_with(r, diag={"stop_triggers": 1})
+    report.runs[("full", "s", "atr_stop_3")] = run_with(r, diag={"stop_activations": 1})
     report.runs[("full", "s", "both")] = run_with(
-        r, diag={"stop_triggers": 7, "drawdown_lock_events": 3}
+        r, diag={"stop_activations": 7, "drawdown_lock_events": 3}
     )
     events = research.intervention_events(report, scen, 5)
     levels = {(e["scenario"], e["control"]): e["level"] for e in events}
@@ -188,7 +191,7 @@ class EventSuite:
         report = RiskSuiteReport("1.0.0", kw["backtest"].fingerprint(), {})
         counts: dict[str, dict[str, float]] = {
             "drawdown_lock_20": {"drawdown_lock_events": 4.0},
-            "atr_stop_3": {"stop_triggers": 0.0},
+            "atr_stop_3": {"stop_activations": 0.0},
         }
         rng = np.random.default_rng(2)
         for sl in kw["slices"]:

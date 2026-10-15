@@ -17,7 +17,7 @@ import pandas as pd
 from app.paper.config import PaperConfig
 from app.paper.ledger import LedgerError
 from app.paper.state import StateError
-from app.paper.store import DataRevisionError, PaperStore
+from app.paper.store import DataRevisionError, PaperStore, scan_accounts
 from app.paper.trader import BarInput, account_id_for
 from app.risk.config import SCENARIOS
 
@@ -83,7 +83,10 @@ def open_account(ref: AccountRef, root: Path) -> PaperStore:
         cfg, ref.strategy_id, ref.strategy_version, ref.instrument, ref.timeframe
     )
     if expected != ref.path.name:
-        raise AccountError("account configuration is not one of the pre-declared scenarios")
+        raise AccountError(
+            "account configuration is not one of the pre-declared scenarios (or was created "
+            "under another risk-mechanism semantic version: ADR-0034)"
+        )
     try:
         return PaperStore(
             cfg,
@@ -146,15 +149,90 @@ def account_view(store: PaperStore) -> dict[str, Any]:
 LEDGER_TYPES = ("decision", "order", "fill", "reconciliation", "snapshot")
 
 
+# Display-only session types of the "Account snapshots" table (nothing is persisted)
+SNAPSHOT_TRADE = "trade"
+SNAPSHOT_NO_TRADE = "no trade"
+SNAPSHOT_REFERENCE = "window-start reference (indicative)"
+SNAPSHOT_INDETERMINATE = "indeterminate"
+SNAPSHOT_TYPES_NOTE = (
+    "Session type is derived for display only; no ledger field records it. A trade is shown "
+    "only when a fill event exists in the same session. No record marks a window-start "
+    "reference snapshot (ADR-0035): it is identical to a flat session that schedules an entry, "
+    "so it is shown as indicative, inferred from the account's committed snapshot count being "
+    "one more than its sessions processed. When the data cannot separate the types, the row "
+    "is indeterminate."
+)
+
+
+def classify_snapshots(
+    events: list[dict[str, Any]], sessions_processed: int, initial_capital: float
+) -> dict[int, tuple[str, str]]:
+    """seq of every committed snapshot event -> (session type, basis), for display only.
+
+    - trade: a `fill` event exists in the same session (never inferred from position or equity);
+    - no trade: no fill in the session, and not the account's first snapshot (only the first
+      snapshot of an account can be a window-start reference, ADR-0035);
+    - first snapshot without a fill: the record cannot tell; the committed snapshot count
+      against `sessions_processed` gives an indication only (one more: reference; equal:
+      counted session), and a reference must be flat with the initial capital; anything else
+      is indeterminate."""
+    fills = {e["session"] for e in events if e["event_type"] == "fill"}
+    snaps = [e for e in events if e["event_type"] == "snapshot"]
+    extra = len(snaps) - sessions_processed
+    out: dict[int, tuple[str, str]] = {}
+    for i, e in enumerate(snaps):
+        rec = e["record"]
+        if e["session"] in fills:
+            kind = (SNAPSHOT_TRADE, "fill event recorded in the same session")
+        elif i > 0:
+            kind = (
+                SNAPSHOT_NO_TRADE,
+                "no fill event in this session; not the account's first snapshot, so not a "
+                "window-start reference",
+            )
+        elif extra == 1 and rec["position_quantity"] == 0 and rec["equity"] == initial_capital:
+            kind = (
+                SNAPSHOT_REFERENCE,
+                "indicative, not recorded: first snapshot, the ledger holds one snapshot more "
+                "than the sessions processed, flat with the initial capital; no record field "
+                "marks a reference",
+            )
+        elif extra == 0:
+            kind = (
+                SNAPSHOT_NO_TRADE,
+                "no fill event in this session; counted as a processed session (indicative: "
+                "snapshots equal the sessions processed)",
+            )
+        else:
+            kind = (
+                SNAPSHOT_INDETERMINATE,
+                "first snapshot without a fill; the snapshot count and sessions processed do "
+                "not allow a classification",
+            )
+        out[e["seq"]] = kind
+    return out
+
+
 def ledger_tables(store: PaperStore, last_n_sessions: int = 20) -> dict[str, pd.DataFrame]:
-    """Recent ledger events per type (verified), newest first, with seq/event_id/hash."""
+    """Recent ledger events per type (verified), newest first, with seq/event_id/hash. The
+    snapshot table also shows a display-only session type (`classify_snapshots`), computed
+    over the whole committed ledger."""
     events = store.events()
     sessions = sorted({e["session"] for e in events})[-last_n_sessions:]
     keep = set(sessions)
+    st = store.trader.state
+    types = classify_snapshots(events, st.session_seq, st.account.initial_capital)
     out = {}
     for t in LEDGER_TYPES:
         rows = [
-            {"seq": e["seq"], "event_id": e["event_id"], **e["record"], "hash": e["hash"][:16]}
+            {
+                "seq": e["seq"],
+                "event_id": e["event_id"],
+                **({"session_type": types[e["seq"]][0]} if t == "snapshot" else {}),
+                **e["record"],
+                "hash": e["hash"][:16],
+                **({"session_type_basis": types[e["seq"]][1]} if t == "snapshot" else {}),
+            }
             for e in events
             if e["event_type"] == t and e["session"] in keep
         ]
@@ -178,6 +256,30 @@ def paper_create_account(
     acct = account_id_for(cfg, strategy_id, strategy_version, instrument, timeframe)
     if (root / acct / "state.json").exists():
         raise AccountError(f"paper account {acct} already exists")
+    # never a silent parallel account next to an existing one (checked before anything is
+    # written; the existing directories are only read)
+    scan = scan_accounts(
+        root,
+        account_id=acct,
+        strategy_id=strategy_id,
+        scenario=scenario_name,
+        instrument=instrument,
+        timeframe=timeframe,
+    )
+    if scan.conflicts:
+        raise AccountError(
+            f"paper account(s) {scan.conflicts} already exist for {strategy_id} / "
+            f"{scenario_name} / {instrument} / {timeframe} under another identity (an earlier "
+            "configuration, risk-mechanism semantic version — ADR-0034 — or strategy "
+            f"version); account {acct} was not created. Decide explicitly what to do with the "
+            "existing account(s) first; they were not opened or changed."
+        )
+    if scan.unreadable:
+        raise AccountError(
+            f"account directories {scan.unreadable} have a manifest that cannot be read, so an "
+            f"identity conflict cannot be ruled out; account {acct} was not created. They were "
+            "not opened or changed."
+        )
     return PaperStore(
         cfg,
         strategy_id=strategy_id,
@@ -192,10 +294,9 @@ def paper_process_sessions(
     store: PaperStore, inputs: list[BarInput], start: date | None = None
 ) -> dict[str, int]:
     """Processes every completed session the account has not processed yet (idempotent).
-    `start` applies only to a new account (first session it observes)."""
-    if store.trader.state.last_session is None and start is not None:
-        inputs = [b for b in inputs if b.bar_ts.tz_convert("America/New_York").date() >= start]
+    `start` applies only to a new account (its first result session; the decision at the close
+    of the session before it is recorded first, `PaperStore.process_many`)."""
     try:
-        return store.process_many(inputs)
+        return store.process_many(inputs, start=start)
     except (LedgerError, DataRevisionError) as exc:
         raise AccountError(f"{type(exc).__name__}: {exc}") from exc

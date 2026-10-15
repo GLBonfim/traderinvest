@@ -61,6 +61,10 @@ class Decision:
     pending_kind: str
     config_fingerprint: str
     input_fingerprint: str  # hash of the observation of bar T only (point-in-time)
+    # ADR-0034 D-A1 (additive; older ledger records lack them): first stop condition of the
+    # position episode, and the canonical causes of an exit decision ("" otherwise)
+    stop_activation: bool = False
+    exit_causes: str = ""
 
 
 @dataclass(frozen=True)
@@ -74,6 +78,7 @@ class Instruction:
     risk_approved_target: float
     pending_kind: str
     atr_at_decision: float  # ATR known at the decision close (sets an ATR stop on entry)
+    exit_causes: str = ""  # ADR-0034 D-A1: causes of an exit instruction (state schema 2)
 
 
 @dataclass(frozen=True)

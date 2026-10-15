@@ -20,7 +20,7 @@ from app.core.safety import SAFE_TRADING_MODES
 from app.database.models import DataQualityEvent, IngestionRun
 from app.paper.config import PaperConfig
 from app.paper.ledger import LedgerError, verify_chain
-from app.paper.state import StateError, loads
+from app.paper.state import StateCompatibilityError, StateError, loads
 from app.risk.config import SCENARIOS
 
 OK, DEGRADED, FAILED = "ok", "warning", "critical"
@@ -33,7 +33,9 @@ class PaperAccountRead:
     instrument: str
     initial_capital: float
     events: list[dict[str, Any]]  # committed, verified
-    error_kind: str | None  # PAPER_STATE_CORRUPT | PAPER_LEDGER_VERIFICATION_FAILED | ...
+    # PAPER_ACCOUNT_ERROR | PAPER_ACCOUNT_INCOMPATIBLE | PAPER_STATE_CORRUPT |
+    # PAPER_LEDGER_VERIFICATION_FAILED | None
+    error_kind: str | None
     error: str
 
 
@@ -60,6 +62,16 @@ def read_paper_account(path: Path) -> PaperAccountRead:
     cfg = PaperConfig(risk=scen)
     try:
         _, pointer = loads((path / "state.json").read_text(encoding="utf-8"), cfg)
+    except StateCompatibilityError as exc:  # intact, but another identity / semantic version
+        return PaperAccountRead(
+            acct,
+            sid,
+            instrument,
+            0.0,
+            [],
+            "PAPER_ACCOUNT_INCOMPATIBLE",
+            f"{type(exc).__name__}: {exc}",
+        )
     except (OSError, StateError) as exc:
         return PaperAccountRead(
             acct, sid, instrument, 0.0, [], "PAPER_STATE_CORRUPT", f"{type(exc).__name__}: {exc}"

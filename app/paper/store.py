@@ -21,13 +21,14 @@ store never repairs or rewrites history.
 import json
 import os
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from app.paper.config import MODE, PaperConfig
 from app.paper.ledger import LedgerError, provenance, step_events, verify_chain
 from app.paper.state import StateError, dumps, loads
-from app.paper.trader import BarInput, PaperTrader, account_id_for
+from app.paper.trader import BarInput, PaperTrader, StepResult, account_id_for, split_at_start
 
 DEFAULT_ROOT = Path("data/paper/accounts")
 
@@ -50,6 +51,70 @@ def _fsync_write(path: Path, text: str) -> None:
         fh.flush()
         os.fsync(fh.fileno())
     os.replace(tmp, path)
+
+
+@dataclass(frozen=True)
+class AccountScan:
+    conflicts: list[str]  # account ids of the same strategy/scenario/instrument/timeframe
+    unreadable: list[str]  # directories whose manifest.json exists but cannot be read
+
+
+def scan_accounts(
+    root: Path,
+    *,
+    account_id: str,
+    strategy_id: str,
+    scenario: str,
+    instrument: str,
+    timeframe: str,
+) -> AccountScan:
+    """Account directories directly under `root` (read-only, no recursion) whose manifest records
+    the same strategy, risk scenario, instrument and timeframe but ANOTHER account id: an
+    account written under an earlier configuration, risk-mechanism semantic version (ADR-0034)
+    or strategy version. A directory without `manifest.json` is not an account; one whose
+    manifest exists but cannot be read is reported in `unreadable` (its identity is unknown,
+    never assumed). Nothing is opened, converted or written."""
+    root = Path(root)
+    if not root.is_dir():
+        return AccountScan([], [])
+    conflicts, unreadable = [], []
+    for d in sorted(p for p in root.iterdir() if p.is_dir() and p.name != account_id):
+        if not (d / "manifest.json").exists():
+            continue
+        try:
+            meta = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+            same = (
+                strategy_id in meta["strategy_versions"]
+                and meta["risk_scenario"] == scenario
+                and meta["instrument"] == instrument
+                and meta["timeframe"] == timeframe
+            )
+        except (OSError, ValueError, KeyError, TypeError):
+            unreadable.append(d.name)
+            continue
+        if same:
+            conflicts.append(str(meta.get("account_id", d.name)))
+    return AccountScan(conflicts, unreadable)
+
+
+def conflicting_accounts(
+    root: Path,
+    *,
+    account_id: str,
+    strategy_id: str,
+    scenario: str,
+    instrument: str,
+    timeframe: str,
+) -> list[str]:
+    """`scan_accounts(...).conflicts` (an unreadable manifest is not listed here)."""
+    return scan_accounts(
+        root,
+        account_id=account_id,
+        strategy_id=strategy_id,
+        scenario=scenario,
+        instrument=instrument,
+        timeframe=timeframe,
+    ).conflicts
 
 
 class PaperStore:
@@ -159,6 +224,9 @@ class PaperStore:
             return ProcessOutcome(tag, "already_processed", 0)
 
         step = self.trader.process(bar)  # in-memory only until committed below
+        return self._commit(step, tag)
+
+    def _commit(self, step: StepResult, tag: str) -> ProcessOutcome:
         events = step_events(step, self.account_id, self.seq + 1, self.last_hash)
         status = "processed"
         if self._tail:
@@ -174,8 +242,22 @@ class PaperStore:
         self._write_state()
         return ProcessOutcome(tag, status, len(events))
 
-    def process_many(self, bars: list[BarInput]) -> dict[str, int]:
+    def process_many(self, bars: list[BarInput], *, start: date | None = None) -> dict[str, int]:
+        """Processes the sessions in order. `start` (first result session) applies only to a
+        NEW account: the sessions before it are not processed; the decision at the close of
+        the session before `start` is recorded first (`PaperTrader.prime`: decision and
+        reference snapshot, not a result session and not counted)."""
         counts = {"processed": 0, "already_processed": 0, "recovered": 0}
+        if start is not None and self.trader.state.last_session is None:
+            history, bars = split_at_start(bars, start)
+            if history:
+                if self._broken:
+                    raise RuntimeError("a previous commit failed; reopen the PaperStore to recover")
+                try:
+                    self._commit(self.trader.prime(history), history[-1].bar_ts.isoformat())
+                except BaseException:
+                    self._broken = True
+                    raise
         for b in bars:
             counts[self.process(b).status] += 1
         return counts

@@ -870,6 +870,8 @@ def paper_trading(ctx: Context) -> None:
     )
     for tab, key in zip(tabs, paper.LEDGER_TYPES, strict=True):
         with tab:
+            if key == "snapshot":
+                st.caption(paper.SNAPSHOT_TYPES_NOTE)
             st.dataframe(tables[key], hide_index=True, width="stretch")
 
 

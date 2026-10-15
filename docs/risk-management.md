@@ -52,28 +52,57 @@ included, no leverage); fractional shares as in Phase 8.
 
 ## Limits and locks
 
-- `max_gross_exposure`, `max_single_instrument_exposure` (≤ 1), optional `max_position_notional`.
-- **Drawdown**: drawdown = equity / HWM − 1 at the close (HWM starts at initial capital).
-  WARNING at ≤ −warning, LOCKED at ≤ −lock. While LOCKED: `force_flat` exits and blocks entries,
-  `block_entries` keeps the position and blocks increases. After `cooldown_sessions` decisions
-  the lock is released and the HWM is reset to the current equity (otherwise a flat account
-  could never recover and would stay locked forever). The reported `max_drawdown` metric keeps
-  the Phase 8 definition (global HWM, never reset).
+- `max_gross_exposure`, `max_single_instrument_exposure` (≤ 1), optional `max_position_notional`
+  — which must exceed 1e-12 × the initial equity (below it no position could ever be held;
+  refused when the risk manager is built, and an explicit error if the equity later grows past
+  it).
+- **Drawdown**: the state is decided by comparing the equity at the close with the LEVEL
+  (ADR-0034 D-A2): LOCKED iff equity ≤ HWM × (1 − lock), WARNING iff equity ≤ HWM × (1 −
+  warning) (HWM starts at initial capital); equality activates, no tolerance. The reported
+  drawdown stays equity / HWM − 1 (it may read −0.19999999999999996 on a locked close). While
+  LOCKED: `force_flat` exits and blocks entries, `block_entries` keeps the position and blocks
+  increases. The lock covers `cooldown_sessions` decisions including the triggering close; a
+  further fall neither extends nor restarts it; the next close unlocks and resets the HWM to
+  the current equity (otherwise a flat account could never recover and would stay locked
+  forever) — except at equity 0, where the last positive HWM is kept and the close relocks.
+  The reported `max_drawdown` metric keeps the Phase 8 definition (global HWM, never reset).
 - **Session loss** (infrastructure, not enabled in any scenario): equity(T)/equity(T−1) − 1
   ≤ −limit blocks increases for N sessions; consecutive losing round trips ≥ K blocks entries.
 
 ## Stops on daily OHLC
 
+> Semantics of the stop, the drawdown lock and their events:
+> [ADR-0034](decisions.md#adr-0034--risk-mechanism-semantics-stop-drawdown-lock-and-their-events)
+> — implemented in the working tree, **not yet committed**. Invalid financial state (D-A5): a
+> non-finite or negative equity, or a non-finite or non-positive high-water mark, raises
+> `ValueError` (the run fails); equity 0 is valid: it locks, normalised exposure is 0, no entry
+> or increase is approved (reason `zero_equity_no_increase`, a sizing-type reason, never a
+> stop or an exit cause), the session loss after a zero equity is not computed (`None`) and
+> keeps the session protection. Undefined daily returns: see *Daily net returns* below.
+
 - Level set once at entry: fixed % below the entry fill, or entry − k·ATR14 (ATR known at the
-  entry decision).
+  entry decision). With an ATR stop, an entry whose decision ATR is undefined (NaN, ±inf, 0 or
+  negative) is **refused** — approved at 0 with reason `stop_input_undefined` (ADR-0034 D-A3);
+  an open position is unaffected (its level was fixed at entry); `fixed_pct` needs no ATR.
 - **Triggered only when the session close ≤ level**; the exit is decided at that close and
   executed at the next open (gap risk borne).
 - **Daily OHLC never reveals intraday order.** A low ≤ level with a close above is reported as
   `stop_intraday_touch` and is **not** an exit; a bar whose range spans both far above and far
   below the level is treated the same way. Intraday stop orders are **unsupported** (they would
   require intraday data).
-- Stop and strategy exit on the same close → one exit at the next open (stop flagged).
-- After a stop, re-entry is blocked until the strategy signal resets (a FLAT request),
+- **Condition vs activation (ADR-0034 D-A1).** `stop_triggered` is the condition (close ≤
+  level while holding) and may repeat while an exit is pending or rejected; `stop_activation`
+  is the **first** condition of the position episode. The episode state persists until a
+  confirmed exit fill and is reset by an entry or exit fill; a rejected exit is not a fill.
+- Stop and strategy exit on the same close → one activation and one exit at the next open.
+- **Exit attribution.** Every exit records `exit_causes`: every cause present, unique, sorted
+  and joined by `+` (`drawdown_lock`, `sizing`, `stop`, `strategy`; `session_lock` reserved),
+  e.g. `stop+strategy`; never empty. While an activated stop's exit is unconfirmed (pending
+  or rejected), every new exit attempt keeps `stop` among its causes (e.g. the strategy turned
+  FLAT meanwhile: `stop+strategy`). `exit_reason` keeps its meaning (the risk decision reason
+  of the exit).
+- After a stop, re-entry is blocked until the strategy state is **FLAT** (`INSUFFICIENT_DATA`
+  never releases it; `RiskManager.decide` receives `strategy_state` explicitly, D-A4),
   avoiding immediate re-entry on a still-LONG signal.
 - No take-profit (not required for loss/exposure control).
 
@@ -91,6 +120,10 @@ included, no leverage); fractional shares as in Phase 8.
 All: rebalance band 0.10, Phase 8 default costs, raw prices, no dividends, long-only.
 
 ## Results — SPY, full sample (8,479 sessions), descriptive only
+
+> These SPY results were computed **before ADR-0034** and have not been recomputed (no
+> operational backtest was run). D-A3 refuses entries during the ATR warm-up, so ATR-stop
+> rows may differ; D-A2 changes a lock only when equity equals the level exactly.
 
 | Strategy | Scenario | CAGR | Vol | Sharpe | Max DD | Orders | Costs | Req. / appr. / exec. exposure | Interventions |
 |---|---|---|---|---|---|---|---|---|---|
@@ -242,11 +275,36 @@ non-finite ones are excluded, never imputed), `order_dependent` (true for `max_d
 `interval_kind` (`exploratory_block_bootstrap_percentile`), `estimate_in_interval` (false when the
 point estimate falls outside its own interval; empty when undefined) and `note` (the
 order-dependence caveat on max-drawdown rows). No p-values and no multiple-comparison correction
-are computed for the risk overlays; the intervals must not be read as tests.
+are computed for the risk overlays; the intervals must not be read as tests. A comparison
+involving a series with undefined daily returns (see *Daily net returns*) is **not testable**:
+all comparisons of a strategy when its control has one, only the overlay's own otherwise (the
+others are computed on the full sessions). Its row is kept with NaN estimate and interval,
+`n_finite` 0, empty `estimate_in_interval` and a `note` starting `not testable`; no session is
+dropped and no value imputed.
+
+**Return-metric status (`risk_table.csv`).** An empty `annualized_volatility`, `sharpe` or
+`sortino` cell can have two causes, so the table appends `annualized_volatility_status`,
+`sharpe_status` and `sortino_status`, set from the calculation layer (never from the cell):
+
+| Status | Meaning |
+|---|---|
+| `defined` | a finite value (zero included: a zero volatility is defined) |
+| `undefined_returns` | not computed: the run's series has undefined daily returns (the in-memory value is `None`, with `undefined_returns` and `return_metrics_note` in the run's metrics) |
+| `undefined_nan` | NaN in the metric's own domain: fewer than 2 sessions, zero standard deviation (Sharpe), no negative return (Sortino) |
+
+One column per metric because the causes are independent (e.g. Sortino NaN while Sharpe is
+defined). The existing columns, their order and values are unchanged; the status columns are
+appended after every existing run column (diagnostics included) and before the event columns. A state the calculation never produces
+(None without undefined returns, a number although there are, an infinite value) fails the
+run instead of being classified.
+
+Which of these comparisons may ever be confirmatory, and how, is fixed in advance in
+[statistical-protocol.md](statistical-protocol.md) (draft, not yet approved).
 
 **Sparse intervention events (descriptive warning).** For each event-driven control in a
-scenario (stop → `stop_triggers`, drawdown lock → `drawdown_lock_events`; a session lock has no
-counter and is reported `not_counted`), `risk_table.csv` appends `event_levels`, `event_counts`
+scenario (stop → `stop_activations`, one per position episode; drawdown lock →
+`drawdown_lock_events`, transitions of the drawdown monitor into LOCKED; session lock →
+`session_lock_events`, ADR-0034 D-A8; `stop_triggers` still counts stop conditions), `risk_table.csv` appends `event_levels`, `event_counts`
 and `event_warning`, and the manifest lists `results.intervention_events`. Levels: `none` (0
 events: the control's effect is not observed in that window — not evidence that it is
 ineffective), `single` (1), `few` (below the threshold), `several` (at or above it);
@@ -255,8 +313,8 @@ continuously). The threshold is a documented convention (`SPARSE_EVENT_THRESHOLD
 in `statistics.sparse_event_threshold`, configurable through `execute(...,
 sparse_event_threshold=...)`), not a statistical rule.
 
-**Daily net returns** (`daily_returns.csv`, schema `risk-daily-returns/1`,
-`app/risk/artifacts.py`). The per-session series each run actually produced, taken from
+**Daily net returns** (`daily_returns.csv`, schema `risk-daily-returns/2` for new runs;
+`risk-daily-returns/1` for runs written before ADR-0034 step 4b, `app/risk/artifacts.py`). The per-session series each run actually produced, taken from
 `RiskRun.equity` during the run (no extra simulation, never rebuilt from aggregate metrics), one
 long table for every (slice, strategy, scenario) of the run:
 
@@ -274,6 +332,13 @@ long table for every (slice, strategy, scenario) of the run:
   0, return 0 unless costs were paid);
 - floats in Python `repr` (lossless for float64); non-finite values written as `nan`, `inf`,
   `-inf` and never imputed (their count per series is in the manifest);
+- **undefined returns (schema `/2`, ADR-0034 D-A5):** `daily_return` is undefined when
+  equity(t−1) = 0 — and for every following session while the equity stays 0. It is written
+  as the explicit token `null` (never `0`, `nan`, `inf` or an estimate; no other spelling is
+  accepted) and counted per series in the manifest (`undefined_returns`). A close that
+  *reaches* 0 from a positive equity is a defined `-1.0`. In memory the column is a nullable
+  `Float64` with `pd.NA` (plain float64 when a file has no null). Schema `/1` has no null
+  token: `/1` files keep their contract and a `null` in one is refused;
 - published atomically and never over an existing file: written, flushed and fsynced to
   `<name>.tmp` (created exclusively — an existing `.tmp` is not ours and is never touched),
   hard-linked to the final name (refused if it exists), temporary removed. A failure before
@@ -285,8 +350,8 @@ long table for every (slice, strategy, scenario) of the run:
 
 `results.daily_returns` records `path`, `schema`, `columns`, `convention`, `initial_capital`,
 `cost_scenario`, total `rows` and, per series, slice / strategy / scenario / cost scenario,
-`rows`, `first_ts`, `last_ts`, `non_finite_returns`, `risk_fingerprint` and
-`backtest_fingerprint`; the file's SHA-256 and size are in `artifacts`, and the code and
+`rows`, `first_ts`, `last_ts`, `non_finite_returns` (`nan`/`inf` only), `undefined_returns`
+(schema `/2` only: null returns), `risk_fingerprint` and `backtest_fingerprint`; the file's SHA-256 and size are in `artifacts`, and the code and
 configuration that produced it are the manifest's `code`, `environment` and `config`.
 
 **Read-only verification.**
@@ -322,7 +387,9 @@ settings, and never raises: every problem — including a malformed manifest —
    fingerprint of the slice-specific backtest configuration rebuilt from the recorded one (the
    recorded base fingerprint must first be reproducible with the running code, otherwise the
    series fingerprints cannot be validated and verification fails); every finite return
-   consistent with the recorded equity (relative tolerance 1e-12).
+   consistent with the recorded equity (relative tolerance 1e-12). Schema `/1` or `/2` with
+   its own convention; `/2`: a null only where the previous recorded equity is 0, never a
+   number there, and per-series null counts = manifest `undefined_returns`; `/1`: no null.
 
 **Guarantee: self-consistency, not authenticity.** Sizes, hashes and cross-checks show that a
 run is internally consistent and has not been damaged or edited in one place only. They do
@@ -335,8 +402,9 @@ Historical `/1` and `/2` runs are checked against their own minimum requirements
 scenarios=[…])` returns the session × scenario matrix of net returns from a run that verifies,
 parsed from the very bytes whose SHA-256 was checked (no verify-then-reread). It raises
 `ReturnsMatrixError` (a `ValueError`) with the reason for an unverified run, an empty or
-duplicated scenario list, a missing series or series not aligned session by session; it
-never aligns, imputes or merges columns. Persisting returns makes comparisons
+duplicated scenario list, a missing series, series not aligned session by session or a series
+containing an undefined (`null`) return, which is not usable as a complete series; it never
+aligns, imputes, drops or merges anything. Complete series load as float64, as before. Persisting returns makes comparisons
 reproducible and auditable; it does not by itself validate any statistical method applied to
 them (no p-values, multiple-comparison corrections or new intervals are computed here).
 

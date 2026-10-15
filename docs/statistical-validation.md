@@ -78,6 +78,9 @@ Interpretation per metric:
 | 3. Confidence interval with established validity | coverage demonstrated for the metric and the data-generating assumptions (e.g. by simulation) | **none is claimed** in this project at present |
 | 4. Formal hypothesis test with multiple-comparison correction | pre-declared family, bootstrap p-value, Holm (primary) / BH (secondary) | only the Phase 9 formal family (30 tests, `family = formal`) |
 
+For the risk-profile research, the families of each kind (exploratory, confirmatory,
+temporal) are pre-specified in [statistical-protocol.md](statistical-protocol.md) (draft).
+
 Two cautions apply to kind 2:
 
 - **Order-dependent metrics** (max drawdown): block resampling breaks drawdown paths; the

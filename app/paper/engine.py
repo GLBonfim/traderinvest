@@ -15,13 +15,26 @@ import numpy as np
 import pandas as pd
 
 from app.backtest.engine import session_times
-from app.backtest.metrics import all_metrics, drawdown, returns_from_equity
+from app.backtest.metrics import (
+    all_metrics,
+    defined_returns,
+    drawdown,
+    undefined_mask,
+    without_undefined_return_metrics,
+)
 from app.data.calendar import TradingCalendar
 from app.indicators.engine import IndicatorEngine
 from app.paper.config import PAPER_VERSION, PaperConfig
 from app.paper.ledger import step_events
 from app.paper.models import AccountSnapshot, Decision, Fill, Order, Reconciliation
-from app.paper.trader import TRADE_COLUMNS, BarInput, PaperState, PaperTrader, StepResult
+from app.paper.trader import (
+    TRADE_COLUMNS,
+    BarInput,
+    PaperState,
+    PaperTrader,
+    StepResult,
+    split_at_start,
+)
 from app.strategies.engine import StrategyEngine
 
 OHLCV = ["open", "high", "low", "close", "volume"]
@@ -143,8 +156,9 @@ class PaperTradingEngine:
         start: date | None = None,
         data_fp: str = "",
     ) -> PaperRun:
+        history: list[BarInput] = []
         if start is not None:
-            inputs = [b for b in inputs if b.bar_ts.tz_convert("America/New_York").date() >= start]
+            history, inputs = split_at_start(inputs, start)
         if not inputs:
             raise ValueError("no sessions to replay")
         net = PaperTrader.new(
@@ -154,8 +168,11 @@ class PaperTradingEngine:
             instrument=instrument,
             timeframe=timeframe,
         )
+        # convention A: the decision at the close before the window (not a result session)
+        reference = net.prime(history) if history else None
         steps = [net.process(b) for b in inputs]
-        targets = {s.session: s.decision.risk_approved_target for s in steps}
+        decided = steps if reference is None else [reference, *steps]
+        targets = {s.session: s.decision.risk_approved_target for s in decided}
         gross_cfg = PaperConfig(
             risk=self.config.risk,
             backtest=self.config.backtest.without_costs(),
@@ -170,21 +187,32 @@ class PaperTradingEngine:
             timeframe=timeframe,
             approved_targets=targets,
         )
+        if history:
+            gross.prime(history)
         gross_equity = pd.Series(
             [gross.process(b).equity for b in inputs],
             index=pd.DatetimeIndex([b.bar_ts for b in inputs], name="ts"),
         )
-        return self._assemble(net, steps, gross_equity, data_fp)
+        return self._assemble(net, steps, gross_equity, data_fp, reference)
 
     def _assemble(
-        self, trader: PaperTrader, steps: list[StepResult], gross_equity: pd.Series, data_fp: str
+        self,
+        trader: PaperTrader,
+        steps: list[StepResult],
+        gross_equity: pd.Series,
+        data_fp: str,
+        reference: StepResult | None = None,
     ) -> PaperRun:
+        """Results (equity, returns, metrics, portfolio, trades) come from the window sessions
+        only. The `reference` decision before the window is in `decisions` (as in the research
+        engine) and, with its reference snapshot, in the ledger `events` only."""
         st = trader.state
         bt = self.config.backtest
         initial = bt.initial_capital
         events: list[dict[str, Any]] = []
         prev = ""
-        for s in steps:
+        decided = steps if reference is None else [reference, *steps]
+        for s in decided:
             evs = step_events(s, st.account_id, len(events) + 1, prev)
             events += evs
             prev = evs[-1]["hash"]
@@ -203,13 +231,15 @@ class PaperTradingEngine:
                 for s in steps
             ]
         ).set_index("ts")
-        eq["daily_return"] = returns_from_equity(eq["equity"], initial)
+        eq["daily_return"] = defined_returns(eq["equity"], initial)  # pd.NA where undefined
         eq["cumulative_return"] = eq["equity"] / initial - 1
         eq = eq.join(drawdown(eq["equity"], initial))
         eq["gross_equity"] = gross_equity
         trades = pd.DataFrame([s.trade for s in steps if s.trade], columns=list(TRADE_COLUMNS))
-        metrics = all_metrics(
-            eq, gross_equity, trades, initial, bt.periods_per_year, bt.risk_free_rate
+        metrics = without_undefined_return_metrics(
+            all_metrics(eq, gross_equity, trades, initial, bt.periods_per_year, bt.risk_free_rate),
+            int(undefined_mask(eq["daily_return"]).sum()),
+            int(undefined_mask(defined_returns(gross_equity, initial)).sum()),
         )
         # Phase 8 conventions: total = final equity - initial; unrealized = total - realized
         metrics["realized_pnl"] = st.account.realized_pnl
@@ -242,7 +272,7 @@ class PaperTradingEngine:
             risk_scenario=self.config.risk.name,
             config_fingerprint=self.config.fingerprint(),
             data_fingerprint=data_fp,
-            decisions=_frame([s.decision for s in steps], Decision),
+            decisions=_frame([s.decision for s in decided], Decision),
             orders=pd.DataFrame(order_rows, columns=[f.name for f in fields(Order)]),
             fills=_frame([s.fill for s in steps if s.fill is not None], Fill),
             portfolio=_frame([s.snapshot for s in steps], AccountSnapshot),
