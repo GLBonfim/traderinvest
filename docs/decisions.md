@@ -1071,3 +1071,109 @@ acceptance difference not listed as intended reverts that step.
 - **Decision:** Local repository on `main`. `.gitignore` excludes `.env`, secrets and all data
   formats; `.env.example` documents configuration. The private GitHub remote is added by the owner
   (instructions in README). CI is deferred.
+
+## ADR-0036 — Forex product scope, environments and agent architecture
+
+- **Status:** Accepted (2026-10-17). Implemented on branch `feature/fx-desktop-platform`
+  (`app/fx`). The SPY research platform is unchanged and kept alongside.
+- **Context:** The owner pivoted the project to a personal Forex trading platform with five
+  agents, a central orchestrator and a central risk manager, intended to become a product that
+  can later be sold or offered by subscription. The existing paper model (long-only, exposure in
+  [0, 1], one instrument, daily bars) cannot represent FX (shorts, margin, bid/ask, several pairs,
+  account-currency conversion, a 24/5 calendar).
+- **Decision:**
+  1. New packages: `app/fx` (domain, agents, risk, orchestrator, simulator, store), `app/engine`
+     (process + protocol, ADR-0037), `app/desktop` (UI). Existing packages are reused only for
+     pure functions (`app.indicators`) and the real-money guard (`app.core.safety`).
+  2. **Environments** are explicit and never interchangeable: `SIMULATION` (local synthetic
+     market + simulated broker), `DEMO` (a broker's practice account, no real money) and `REAL`.
+     `REAL` exists only as an identifier: `require_executable(REAL)` calls
+     `refuse_real_money_order()` (ADR-0006) and the configuration refuses it. No adapter falls
+     back from one environment to another. A DEMO adapter must trade LIVE-origin prices only.
+  3. **Ports** (`app/fx/ports.py`): `MarketDataProvider`, `AccountProvider`, `PositionProvider`,
+     `OrderExecutionProvider` (idempotent by client order id; `ExecutionError(ambiguous=...)`),
+     `TradingCalendar`, plus declared `Capabilities`.
+  4. **Every price carries its origin** (`SYNTHETIC`, `HISTORICAL`, `DELAYED`, `LIVE`); the UI
+     labels synthetic prices on every screen.
+  5. **Agents** propose, they never trade: Trend Following (EMA 20/50 + slow-EMA slope), Momentum
+     (RSI/ROC/MACD agreement), Mean Reversion (Bollinger + RSI), Volatility/Regime filter
+     (efficiency ratio, ATR percentile, spread/ATR; can veto entries), Portfolio Coordinator
+     (regime-weighted consensus, conflict = no trade, currency-diversification penalty, at most
+     one new entry per cycle). Agents read closed bars only (tested for look-ahead).
+  6. **Scores** are heuristic confidences in [0, 1], never probabilities; the UI says so.
+  7. **Order lifecycle** (`app/fx/lifecycle.py`): SIGNAL → PROPOSAL → AUTHORIZED | REFUSED →
+     SENT → ACCEPTED | REJECTED | UNKNOWN → PARTIALLY_FILLED → FILLED (+ CANCELLED, EXPIRED).
+     Each step is journaled; an UNKNOWN (ambiguous) send is resolved by looking the order up by
+     client order id, never by resending. The intent is written to disk (SENT) before the venue
+     sees it, and the outcome is saved immediately after.
+  8. **Accounting**: netting per pair (no hedging), P&L in the quote currency converted to the
+     account currency (direct, inverse or USD cross), unrealized marked at the liquidation side,
+     margin = notional / venue leverage. Swap/financing is not modelled yet (limitation).
+  9. **Persistence**: SQLite per data directory; hash-chained journal + state documents written
+     in one transaction (market, broker, risk, orchestrator). A restart recovers positions,
+     daily counters, locks, the kill switch and in-flight intents.
+- **Provisional defaults (configurable):** account EUR, capital 10 000, nine major pairs,
+  decisions on M15 bars, venue leverage 30 (ESMA retail majors).
+- **Not done yet:** DEMO broker adapter and live data provider (require choosing a provider and
+  the owner's own practice account; no account was created and no credential used).
+
+## ADR-0037 — Native desktop application and engine process protocol
+
+- **Status:** Accepted (2026-10-17). Implemented in `app/desktop` and `app/engine`.
+- **Context:** The owner requires a native Windows application in its own window (resizable,
+  full screen, icon), game-like, packageable as an `.exe`, not a web app in a browser. Godot 4
+  and PySide6 were compared in Phase 0.
+- **Decision:**
+  1. **PySide6 (Qt 6, LGPL v3)**: one language and one process model with the Python engine,
+     native widgets for dense trading tables, procedural pixel art in `QPainter`. Godot would add
+     a second language/runtime and an IPC bridge for little gain at this stage.
+     `pyside6-essentials` only (no WebEngine).
+  2. **Separate engine process.** The UI starts the engine as a child process (`--engine` in the
+     frozen exe, `python -m app.engine` from source) and is only a client: it renders snapshots
+     and sends commands; it never places orders. A UI crash cannot corrupt the engine state.
+  3. **Protocol v1** (`app/engine/protocol.py`): JSON lines over TCP on 127.0.0.1 only; a fresh
+     random session token per launch, passed through the environment (not the command line) and
+     compared in constant time; `hello/welcome`, periodic `snapshot`, live `event`, `command`
+     with id and `ack`, `heartbeat`. There is no command to place an order by hand. Destructive
+     commands need typed confirmation words (`FECHAR`, `REINICIAR`, `LIBERTAR`).
+  4. **Single instance** per data directory (OS lock on `engine.lock`).
+  5. **Window-close policy:** closing the window asks for confirmation, then stops the engine
+     cleanly (state saved; positions stay in the simulated account with their server-side stops
+     and are recovered on the next start). **Orphan policy:** the engine stops by itself if no
+     client is connected for 20 s, so a crashed UI never leaves a hidden engine trading. A
+     background/tray mode is a possible later option (it needs its own ADR).
+  6. **Visual identity:** dark cyber operations room, neon green/magenta/cyan, amber warnings, red
+     critical; all art procedural (no third-party assets). **State is never shown by colour
+     alone**: every status has a distinct glyph shape and a text label.
+  7. **Packaging:** PyInstaller one-folder build (`packaging/build.py`), Windows version
+     resource, generated multi-size icon, portable zip. LGPL compliance by dynamic linking and
+     `THIRD_PARTY_NOTICES.md`. Code signing is not set up (SmartScreen will warn).
+
+## ADR-0038 — FX trading day and daily risk definitions
+
+- **Status:** Accepted (2026-10-17). Implemented in `app/fx/calendar.py` and `app/fx/risk.py`.
+- **Decision:**
+  1. **Trading day** = 17:00 New York to 17:00 New York (rollover), DST-aware through `zoneinfo`.
+     The market is open Sunday 17:00 to Friday 17:00 New York; configurable holiday trading days
+     (25 December and 1 January by default) are closed.
+  2. **Daily P&L** = current equity − day-start equity, where equity = balance + unrealized P&L
+     marked at the liquidation side; it is therefore net of spread, commissions and realized
+     results. Day-start equity is the first equity observed in the trading day.
+  3. **Entries**: an authorized intent that opens or increases exposure (including the opening
+     leg of a reversal) counts as one entry. It is reserved at authorization, consumed when it
+     fills (a partial fill consumes it) and released if nothing fills; a reservation in flight at
+     the rollover counts on the day it fills. Exits never count. Default maximum: 5 per day.
+  4. **Locks**: daily P&L ≤ −5 % → `daily_loss` lock (default: flatten positions); ≥ +15 % →
+     `profit_target` lock (default: keep positions with their stops). A lock blocks new entries
+     until the next trading day, survives restarts and cannot be released by hand. Exits are
+     always allowed.
+  5. **Kill switch**: blocks all new entries until released manually with the word `LIBERTAR`;
+     survives restarts and day rolls; may be engaged with "flatten all".
+  6. **Entry checks** (all must pass): environment not REAL; kill switch off; no lock; entry
+     available; market open and outside 15 min around the rollover; fresh quote (≤ 120 s); price
+     origin allowed (DEMO: LIVE only); spread ≤ 3 pips; score ≥ 0.55; stop loss present and on
+     the right side; risk/reward ≥ 1.2; size from risk per trade (0.5 % of equity at the stop),
+     cut to the leverage cap (30× gross); minimum size; max open positions; free margin after
+     the trade ≥ 50 % of equity; net exposure per currency ≤ 600 % of equity. No pyramiding.
+  7. Changing risk settings applies immediately but never clears an engaged lock or the kill
+     switch; account currency/capital change only through an explicit account reset.

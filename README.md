@@ -8,6 +8,16 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 > and to say `NO STATISTICAL EDGE FOUND` or `INSUFFICIENT EVIDENCE` when it does not.
 > **Real-money execution is disabled and blocked in code.**
 
+## TraderInvest FX (desktop Forex platform)
+
+A native Windows application with five agents (Trend, Momentum, Mean Reversion, Regime filter,
+Portfolio Coordinator), a central orchestrator and a central risk manager, shown as an
+isometric pixel-art operations room. SIMULATION environment only (synthetic prices, no real
+money). Run `uv run python -m app.desktop`; build the `.exe` with
+`uv run --group build python packaging/build.py`. Details: [docs/fx-platform.md](docs/fx-platform.md),
+commercial notes: [docs/commercial-readiness.md](docs/commercial-readiness.md),
+decisions: ADR-0036 to ADR-0038.
+
 ## Status
 
 | Phase | Scope | Status |

@@ -13,6 +13,7 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "pydantic>=2.8",
     "pydantic-settings>=2.4",
+    "pyside6-essentials>=6.8",
     "scikit-learn>=1.9.1",
     "sqlalchemy>=2.0.30",
     "streamlit>=1.50",
@@ -22,6 +23,9 @@ dependencies = [
 ]
 
 [dependency-groups]
+build = [
+    "pyinstaller>=6.10",
+]
 dev = [
     "httpx2>=2.13.1",
     "mypy>=1.11",
@@ -57,6 +61,7 @@ ignore = []
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]
 "migrations/**" = ["N999"]
+"app/desktop/**" = ["RUF001"]  # deliberate typographic glyphs in UI text (minus sign, dashes)
 
 # ── mypy ────────────────────────────────────────────────
 [tool.mypy]

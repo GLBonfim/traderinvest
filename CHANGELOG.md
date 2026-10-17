@@ -3,7 +3,30 @@
 All notable changes are documented here. Format: [Keep a Changelog](https://keepachangelog.com/),
 versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [Unreleased] — branch `feature/fx-desktop-platform`
+
+### Added
+- TraderInvest FX (ADR-0036 to ADR-0038): Forex domain (`app/fx`) with bid/ask quotes and data
+  origin labels, SIMULATION/DEMO/REAL environments (REAL refused by the ADR-0006 guard), 24/5
+  calendar with the 17:00 New York trading day, five agents and a portfolio coordinator, a
+  central risk manager (5 entries/day, −5 % / +15 % persisted daily locks, kill switch,
+  stop-based sizing, leverage, margin, spread, freshness and exposure checks), a multi-currency
+  netting book, a synthetic market and a simulated broker (idempotent orders, injectable
+  rejections/timeouts/partial fills, gapped stops, margin close-out), an orchestrator with the
+  full order lifecycle, write-ahead persistence and crash recovery, and a hash-chained SQLite
+  journal.
+- Engine process (`app/engine`): loopback-only JSON-lines protocol with a per-launch session
+  token, confirmations for destructive commands, single instance per data directory, orphan
+  shutdown.
+- Desktop application (`app/desktop`, PySide6): isometric pixel-art operations room with
+  animated agents and data packets, market/portfolio/risk/agents/orders panels, live event log,
+  kill switch, settings, first-run risk disclaimer, full screen, generated icon; state is never
+  shown by colour alone.
+- Packaging (`packaging/`): PyInstaller one-folder build with icon and version resource, frozen
+  engine smoke test, portable zip, third-party notices, draft commercial licence.
+- 90 tests in `tests/unit/fx`; docs `docs/fx-platform.md`, `docs/commercial-readiness.md`.
+
+## [Unreleased] — earlier work
 
 Branch `feature/alpaca-paper-validation`. No external sandbox order has been placed.
 
