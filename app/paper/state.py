@@ -76,7 +76,10 @@ def _uts(s: Any) -> pd.Timestamp | None:
         return None
     if not isinstance(s, str):
         raise StateError("timestamp must be an ISO string")
-    t = pd.Timestamp(s)
+    try:
+        t = pd.Timestamp(s)
+    except ValueError as exc:  # unparseable or out-of-range text: corrupt content
+        raise StateError(f"invalid timestamp {s!r}: {exc}") from exc
     if t.tzinfo is None:
         raise StateError("timestamp must be timezone-aware")
     return t.tz_convert("UTC")
