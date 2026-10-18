@@ -22,6 +22,7 @@ from app.engine.protocol import PROTOCOL_VERSION, TOKEN_ENV, command
 
 ORPHAN_TIMEOUT_S = 20
 ENGINE_BUSY_EXIT = 3  # the engine's exit code when another engine holds the data directory
+ENGINE_STARTUP_REFUSED_EXIT = 4  # classified refusal: restarting would repeat the same failure
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -183,6 +184,9 @@ class EngineSupervisor(QObject):
             return
         if code == ENGINE_BUSY_EXIT:
             self.status.emit("error", self.last_error or "outro motor está a usar os dados")
+            return
+        if code == ENGINE_STARTUP_REFUSED_EXIT:  # no automatic restart loop (M2)
+            self.status.emit("error", self.last_error or "startup:startup arranque recusado")
             return
         self.status.emit("stopped", str(code))
         if self.restarts < 2:

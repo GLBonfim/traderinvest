@@ -1106,6 +1106,16 @@ acceptance difference not listed as intended reverts that step.
      Each step is journaled; an UNKNOWN (ambiguous) send is resolved by looking the order up by
      client order id, never by resending. The intent is written to disk (SENT) before the venue
      sees it, and the outcome is saved immediately after.
+     *Revision 2026-10-18 (review fixes E3, M1, M6):* every state change goes through
+     `lifecycle.transition` (`Intent.move`); terminal states have no way out. An empty lookup
+     proves absence only if the adapter declares `authoritative_order_lookup` (the in-process
+     simulator does); otherwise the order stays UNKNOWN, new entries on its pair are refused,
+     lookups are retried on each tick up to `ReconcilePolicy` (5 attempts / 5 min of engine
+     clock) and then the kill switch is engaged with an `order_unresolved` alert, the order
+     staying UNKNOWN. Orders still unknown after a restart block every new entry until
+     reconciled. A partial fill whose remainder is cancelled ends CANCELLED with
+     `filled_units > 0` (PARTIALLY_FILLED is reserved for a working order); fill quantities
+     are the venue's cumulative totals, so repeated reports never double-count.
   8. **Accounting**: netting per pair (no hedging), P&L in the quote currency converted to the
      account currency (direct, inverse or USD cross), unrealized marked at the liquidation side,
      margin = notional / venue leverage. Swap/financing is not modelled yet (limitation).
@@ -1139,7 +1149,16 @@ acceptance difference not listed as intended reverts that step.
   4. **Single instance** per data directory (OS lock on `engine.lock`).
   5. **Window-close policy:** closing the window asks for confirmation, then stops the engine
      cleanly (state saved; positions stay in the simulated account with their server-side stops
-     and are recovered on the next start). **Orphan policy:** the engine stops by itself if no
+     and are recovered on the next start). *Revision 2026-10-18 (E2, M2-M5):* the engine
+     refuses to start (exit code 4, `ENGINE_ERROR startup:<code>`, never restarted
+     automatically by the desktop) when the configured environment, the adapter's declared
+     environment and the enabled set (`environment.ENABLED` = SIMULATION) disagree, when the
+     journal hash chain is broken or shorter than the saved state's journal head, when state
+     documents are malformed/incomplete (or missing while the journal has history), or when
+     the configured account currency differs from the persisted account's; nothing is
+     repaired or recreated. The desktop's environment badge shows only the engine's validated
+     environment. An internal error pauses the engine with a persisted `safety` reason; only
+     the explicit `resume` command resumes. **Orphan policy:** the engine stops by itself if no
      client is connected for 20 s, so a crashed UI never leaves a hidden engine trading. A
      background/tray mode is a possible later option (it needs its own ADR).
   6. **Visual identity:** dark cyber operations room, neon green/magenta/cyan, amber warnings, red
@@ -1166,7 +1185,10 @@ acceptance difference not listed as intended reverts that step.
   4. **Locks**: daily P&L ≤ −5 % → `daily_loss` lock (default: flatten positions); ≥ +15 % →
      `profit_target` lock (default: keep positions with their stops). A lock blocks new entries
      until the next trading day, survives restarts and cannot be released by hand. Exits are
-     always allowed.
+     always allowed. **Precedence** (revision 2026-10-18, fix E1): `daily_loss` >
+     `profit_target`. The loss limit is evaluated on every observation even after the profit
+     target locked the day; reaching it upgrades the lock to `daily_loss` and applies its
+     flatten policy. A `daily_loss` lock is never downgraded.
   5. **Kill switch**: blocks all new entries until released manually with the word `LIBERTAR`;
      survives restarts and day rolls; may be engaged with "flatten all".
   6. **Entry checks** (all must pass): environment not REAL; kill switch off; no lock; entry

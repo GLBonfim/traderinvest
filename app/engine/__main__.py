@@ -20,6 +20,10 @@ from app.engine.instance import EngineAlreadyRunningError
 from app.engine.protocol import TOKEN_ENV
 from app.engine.service import EngineService
 from app.fx.config import data_dir
+from app.fx.errors import FxStartupError
+
+BUSY_EXIT = 3  # another engine holds the data directory
+STARTUP_REFUSED_EXIT = 4  # classified refusal (FxStartupError): never restarted automatically
 
 
 def setup_logging(root: Path) -> None:
@@ -60,7 +64,11 @@ def main(argv: list[str] | None = None) -> int:
         asyncio.run(runner())
     except EngineAlreadyRunningError as exc:
         print(f"ENGINE_ERROR {exc}", flush=True)
-        return 3
+        return BUSY_EXIT
+    except FxStartupError as exc:
+        logging.getLogger("traderinvest.engine").error("start refused: %s %s", exc.code, exc)
+        print(f"ENGINE_ERROR startup:{exc.code} {exc}", flush=True)
+        return STARTUP_REFUSED_EXIT
     except KeyboardInterrupt:
         return 0
     return 0

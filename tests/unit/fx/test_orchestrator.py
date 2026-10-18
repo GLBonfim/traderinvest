@@ -89,7 +89,8 @@ def test_partial_fill_consumes_the_entry(tmp_path: Path) -> None:
     o = orchestrator(tmp_path)
     o.broker.faults.partial_next = 1
     it = o.process(long_request(o), "trend")
-    assert it is not None and it.state is OrderState.PARTIALLY_FILLED
+    assert it is not None and it.state is OrderState.CANCELLED  # remainder cancelled (M6)
+    assert "partially_filled" in states(it) and 0 < it.filled_units < it.units
     assert o.risk.state.entries_used == 1
 
 
@@ -152,13 +153,13 @@ def test_simulation_runs_and_respects_limits(tmp_path: Path) -> None:
     for _ in range(900):
         o.tick()
     for it in o.intents.values():
-        if it.is_entry and it.state in (OrderState.FILLED, OrderState.PARTIALLY_FILLED):
+        if it.is_entry and it.filled_units > 0:
             days[
                 o.calendar.trading_day(
                     __import__("datetime").datetime.fromisoformat(it.created_at)
                 ).isoformat()
             ] += 1
-        if it.state in (OrderState.FILLED, OrderState.PARTIALLY_FILLED):
+        if it.filled_units > 0:
             assert {"authorized", "sent"} <= set(states(it))
     assert all(n <= 5 for n in days.values())
     snap = o.snapshot()

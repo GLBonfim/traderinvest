@@ -7,6 +7,20 @@ distinct, recorded state; nothing jumps from a signal straight to a fill.
 
 Positions have their own states: OPEN -> CLOSED. An UNKNOWN order (timeout, lost reply) is
 resolved only by looking it up at the venue by its client order id, never by resending.
+
+Allowed transitions (`_ALLOWED`, the single source of truth; `transition()` is the only
+validation and every state change of an order goes through it):
+
+    SIGNAL           -> PROPOSAL
+    PROPOSAL         -> AUTHORIZED | REFUSED
+    AUTHORIZED       -> SENT | CANCELLED (never sent)
+    SENT             -> ACCEPTED | REJECTED | UNKNOWN | PARTIALLY_FILLED | FILLED
+    UNKNOWN          -> ACCEPTED | REJECTED | PARTIALLY_FILLED | FILLED | CANCELLED
+    ACCEPTED         -> PARTIALLY_FILLED | FILLED | CANCELLED | EXPIRED
+    PARTIALLY_FILLED -> PARTIALLY_FILLED (more fills) | FILLED | CANCELLED | EXPIRED
+                        (CANCELLED/EXPIRED after a partial fill = remainder cancelled)
+
+Terminal states (REFUSED, REJECTED, FILLED, CANCELLED, EXPIRED) have no way out.
 """
 
 from enum import StrEnum
@@ -68,7 +82,12 @@ _ALLOWED: dict[OrderState, frozenset[OrderState]] = {
         }
     ),
     OrderState.PARTIALLY_FILLED: frozenset(
-        {OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.CANCELLED}
+        {
+            OrderState.PARTIALLY_FILLED,
+            OrderState.FILLED,
+            OrderState.CANCELLED,
+            OrderState.EXPIRED,
+        }
     ),
 }
 
@@ -94,6 +113,10 @@ class IllegalTransitionError(ValueError):
 
 def can_transition(src: OrderState, dst: OrderState) -> bool:
     return dst in _ALLOWED.get(src, frozenset())
+
+
+def is_terminal(state: OrderState) -> bool:
+    return state in TERMINAL
 
 
 def transition(src: OrderState, dst: OrderState) -> OrderState:

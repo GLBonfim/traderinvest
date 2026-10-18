@@ -93,6 +93,13 @@ class OrderStatus:
     reason: str = ""
     fills: list[Fill] = field(default_factory=list)
 
+    @property
+    def remaining_units(self) -> float:
+        """Units not executed. With a final state (CANCELLED/EXPIRED/REJECTED) the remainder
+        will never execute; a CANCELLED order with `filled_units > 0` is a partial fill whose
+        remainder was cancelled."""
+        return max(0.0, self.units - self.filled_units)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "client_order_id": self.client_order_id,

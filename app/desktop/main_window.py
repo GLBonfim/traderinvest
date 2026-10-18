@@ -41,6 +41,7 @@ from app.desktop.panels import (
 from app.desktop.strings import t
 from app.desktop.theme import P, mono_font
 from app.engine.protocol import CONFIRM_FLATTEN, CONFIRM_KILL_RELEASE, CONFIRM_RESET
+from app.fx.config import data_dir
 
 SPEEDS = [("1x  (1 min/s)", 1.0), ("2x", 2.0), ("5x", 5.0), ("10x", 10.0), ("20x", 20.0)]
 
@@ -126,7 +127,7 @@ class MainWindow(QMainWindow):
         title.setFont(mono_font(14, bold=True))
         title.setStyleSheet(f"color: {P.green};")
         h.addWidget(title)
-        self.badge = QLabel(t("env_sim"))
+        self.badge = QLabel(t("env_unknown"))  # set from the validated snapshot only
         self.badge.setObjectName("Badge")
         h.addWidget(self.badge)
         self.clock = QLabel("—")
@@ -230,6 +231,16 @@ class MainWindow(QMainWindow):
         elif code == "error":
             self._set_engine(f"{t('engine_error')}: {detail}", P.red, "✖")
             self.room.set_offline(detail)
+            self._set_badge({})
+            if detail.startswith("startup:"):
+                code_, _, reason = detail.removeprefix("startup:").partition(" ")
+                QMessageBox.critical(
+                    self,
+                    t("startup_refused_title"),
+                    t("startup_refused_body").format(
+                        code=code_, reason=reason, folder=str(data_dir())
+                    ),
+                )
             if "already" in detail:
                 QMessageBox.warning(
                     self,
@@ -242,9 +253,26 @@ class MainWindow(QMainWindow):
         if not self._quitting:
             self._set_engine(t("engine_disconnected"), P.red, "■")
             self.room.set_offline("desligado")
+            self._set_badge({})
+
+    def _set_badge(self, snap: dict[str, Any] | None) -> None:
+        """The environment shown is the engine's validated one (E2), never a fixed label."""
+        if not snap or not snap.get("environment_validated"):
+            self.badge.setText(t("env_unknown") if snap is None else t("env_offline"))
+            return
+        env = snap.get("environment")
+        if env == "simulation":
+            text = t("env_sim")
+        elif env == "demo":
+            text = t("env_demo")
+        else:
+            text = str(snap.get("environment_label") or env).upper()
+        self.badge.setText(text)
+        self.badge.setToolTip(str(snap.get("adapter") or ""))
 
     def _on_snapshot(self, snap: dict[str, Any]) -> None:
         self.snap = snap
+        self._set_badge(snap)
         self._last_snapshot_ms = 0
         self.room.apply_snapshot(snap)
         idx = self.tabs.currentIndex()
@@ -266,6 +294,9 @@ class MainWindow(QMainWindow):
         sess = snap.get("sessions") or []
         self.sessions.setText(f"{t('sessions')}: {', '.join(sess) if sess else '—'}")
         self.pause_btn.setText(t("resume") if snap.get("paused") else t("pause"))
+        self.pause_btn.setToolTip(
+            t("paused_safety") if snap.get("pause_reason") == "safety" else ""
+        )
         killed = bool(r.get("kill_switch"))
         self.kill_btn.setText("■ KILL SWITCH ATIVO" if killed else t("kill"))
         self.kill_btn.setEnabled(not killed)

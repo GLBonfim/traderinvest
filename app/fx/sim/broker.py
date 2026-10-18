@@ -10,7 +10,7 @@ Behaviour, chosen to resemble a retail FX venue:
 - margin close-out: when equity / used margin falls below `stop_out_level_pct` the largest
   losing position is closed (ESMA retail convention: 50 %);
 - injectable faults for tests and drills: reject, timeout after acceptance (ambiguous), partial
-  fill.
+  fill (reported as CANCELLED with `filled_units > 0`: the remainder is cancelled).
 """
 
 from collections.abc import Mapping
@@ -82,6 +82,9 @@ class SimBroker:
             unit_step=self.config.unit_step,
             max_leverage=self.config.leverage,
             description="Corretor simulado local (sem dinheiro real, sem serviço externo)",
+            # the simulator's order book IS the venue, in this process: an id it does not hold
+            # was never accepted, so an empty lookup is a confirmed absence
+            authoritative_order_lookup=True,
         )
 
     # --- market ------------------------------------------------------------------------------
@@ -240,7 +243,9 @@ class SimBroker:
         status.fills.append(fill)
         status.filled_units = units
         status.avg_price = fill.price
-        status.state = OrderState.PARTIALLY_FILLED if partial else OrderState.FILLED
+        # a market order partly filled has its remainder cancelled at once (immediate-or-
+        # cancel): the venue reports a final CANCELLED order with filled_units > 0
+        status.state = OrderState.CANCELLED if partial else OrderState.FILLED
         if partial:
             status.reason = "partial fill; remainder cancelled"
         if f.timeout_next > 0:

@@ -26,6 +26,10 @@ class Capabilities:
     unit_step: float
     max_leverage: float
     description: str
+    # True only when `order(id) is None` PROVES the venue never accepted that id (e.g. an
+    # in-process simulator whose order book is the venue). Otherwise an empty lookup is
+    # inconclusive and an order with an unknown outcome stays UNKNOWN (ADR-0036).
+    authoritative_order_lookup: bool = False
 
 
 class MarketDataProvider(Protocol):
@@ -56,7 +60,11 @@ class OrderExecutionProvider(Protocol):
         order. Raises `ExecutionError(ambiguous=True)` when the outcome is unknown."""
         ...
 
-    def order(self, client_order_id: str) -> OrderStatus | None: ...
+    def order(self, client_order_id: str) -> OrderStatus | None:
+        """Looks an order up by client order id. `None` means "not found by this lookup"; it
+        proves absence only if `capabilities.authoritative_order_lookup` is True. May raise
+        `ExecutionError` when the venue cannot be queried (an inconclusive lookup)."""
+        ...
 
 
 class BrokerAdapter(AccountProvider, PositionProvider, OrderExecutionProvider, Protocol):

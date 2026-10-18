@@ -5,6 +5,10 @@
   edit or deletion is detectable with `verify()`.
 - `state`: named JSON documents (risk state, broker, market, orchestrator) written together in
   one transaction, so a restart always sees a consistent set.
+
+Errors are classified (app/fx/errors.py): a file that is not a database ->
+`StateUnreadableError`; an unsupported schema or a malformed document -> `StoreError`
+(a `StateCorruptError`). The store never repairs, rewrites or deletes data by itself.
 """
 
 import hashlib
@@ -16,6 +20,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.fx.errors import StateCorruptError, StateUnreadableError
+
 SCHEMA_VERSION = 1
 GENESIS = "0" * 64
 
@@ -24,8 +30,8 @@ def _canon(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
-class StoreError(RuntimeError):
-    pass
+class StoreError(StateCorruptError):
+    """Unsupported schema or malformed stored document."""
 
 
 class FxStore:
@@ -33,6 +39,16 @@ class FxStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.db = sqlite3.connect(path, isolation_level=None)  # explicit transactions
+        try:
+            self._init_schema()
+        except sqlite3.DatabaseError as exc:
+            self.db.close()
+            raise StateUnreadableError(
+                f"a base de dados de estado {path.name} não pode ser lida: {type(exc).__name__}"
+            ) from exc
+        self._depth = 0
+
+    def _init_schema(self) -> None:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
         self.db.execute(
@@ -53,7 +69,6 @@ class FxStore:
             self.db.execute("INSERT INTO meta VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
         elif int(row[0]) != SCHEMA_VERSION:
             raise StoreError(f"unsupported store schema {row[0]} (expected {SCHEMA_VERSION})")
-        self._depth = 0
 
     def close(self) -> None:
         self.db.close()
@@ -131,6 +146,18 @@ class FxStore:
     def count(self) -> int:
         return int(self.db.execute("SELECT COUNT(*) FROM journal").fetchone()[0])
 
+    def head(self) -> tuple[int, str]:
+        """(last seq, last hash); (0, GENESIS) for an empty journal."""
+        return self._last()
+
+    def hash_at(self, seq: int) -> str | None:
+        row = self.db.execute("SELECT hash FROM journal WHERE seq=?", (seq,)).fetchone()
+        return None if row is None else str(row[0])
+
+    def last_kind(self) -> str | None:
+        row = self.db.execute("SELECT kind FROM journal ORDER BY seq DESC LIMIT 1").fetchone()
+        return None if row is None else str(row[0])
+
     # --- state -----------------------------------------------------------------------------
 
     def put_state(self, key: str, value: Mapping[str, Any]) -> None:
@@ -149,7 +176,10 @@ class FxStore:
         row = self.db.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
         if row is None:
             return None
-        value = json.loads(row[0])
+        try:
+            value = json.loads(row[0])
+        except json.JSONDecodeError as exc:
+            raise StoreError(f"state {key!r} is not valid JSON") from exc
         if not isinstance(value, dict):
             raise StoreError(f"state {key!r} is not an object")
         return value

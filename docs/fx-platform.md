@@ -69,6 +69,34 @@ Output: `dist/TraderInvestFX/TraderInvestFX.exe` (one-folder build) and
 `dist/TraderInvestFX-<version>-win64-portable.zip`. The build script smoke-tests the frozen
 engine (`--engine` prints `ENGINE_READY` and stops by itself without a client).
 
+## Arranque recusado (recuperação manual)
+
+The engine refuses to start, before processing anything, when its configuration or persisted
+data cannot be trusted. The desktop shows the code and does not restart the engine
+automatically; the engine prints `ENGINE_ERROR startup:<code> <reason>` and exits with code 4.
+Nothing is deleted, repaired or overwritten.
+
+| Code | Meaning |
+|---|---|
+| `config_invalid` | `config.json` cannot be read or fails validation (e.g. environment `real`) |
+| `environment_mismatch` | configuration, adapter and enabled environments disagree (only SIMULATION is enabled) |
+| `state_unreadable` | `fx.db` is not a readable database |
+| `state_corrupt` | a state document is malformed or incomplete, or state is missing while the journal has history |
+| `journal_integrity` | the journal hash chain is broken, or shorter than the saved state expects |
+| `account_mismatch` | the configured account currency differs from the persisted account |
+
+Procedure:
+
+1. Close TraderInvest FX and copy the whole data folder (`%LOCALAPPDATA%\TraderInvestFX`, or
+   `TRADERINVEST_FX_HOME`) somewhere safe before changing anything.
+2. `config_invalid`, `environment_mismatch`, `account_mismatch`: correct `config.json` (for
+   example set `account_currency` back to the persisted account's currency) and start again.
+3. `state_*` or `journal_integrity`: restore `fx.db` from a backup if one exists. Otherwise,
+   to deliberately start a new simulated account, rename (do not delete) `fx.db` to keep it
+   for diagnosis; the engine then creates a new account on the next start.
+4. A persisted safety pause (`pause_reason = safety`) is not an error: inspect
+   `logs/engine.log`, then resume explicitly with the Pause/Resume button.
+
 ## Tests
 
 ```powershell

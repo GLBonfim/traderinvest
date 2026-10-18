@@ -5,6 +5,16 @@ PT: dict[str, str] = {
     "window_title": "TraderInvest FX — Centro de Operações",
     "env_sim": "SIMULAÇÃO · DADOS SINTÉTICOS · SEM DINHEIRO REAL",
     "env_demo": "DEMO · CONTA DE PRÁTICA · SEM DINHEIRO REAL",
+    "env_unknown": "AMBIENTE: A VERIFICAR…",
+    "env_offline": "AMBIENTE: SEM LIGAÇÃO AO MOTOR",
+    "startup_refused_title": "Arranque do motor recusado",
+    "startup_refused_body": "O motor recusou arrancar porque a configuração ou os dados "
+    "guardados não são de confiança. Nada foi apagado nem substituído e nenhuma ordem foi "
+    "processada.\n\nCódigo: {code}\nMotivo: {reason}\n\nRecuperação manual: feche a "
+    "aplicação, faça uma cópia da pasta de dados ({folder}) e siga o procedimento "
+    '"Arranque recusado" em docs/fx-platform.md.',
+    "paused_safety": "❚❚ Em pausa de segurança (erro interno) — retome só depois de verificar o "
+    "registo",
     "engine_starting": "A iniciar o motor…",
     "engine_connected": "Motor ligado",
     "engine_disconnected": "Motor desligado",

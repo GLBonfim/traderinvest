@@ -107,7 +107,9 @@ def test_injected_rejection_timeout_and_partial() -> None:
     assert found is not None and found.state is OrderState.FILLED  # it did reach the venue
     br.faults.partial_next = 1
     st = br.submit(req("p", Side.BUY, 10_000))
-    assert st.state is OrderState.PARTIALLY_FILLED and st.filled_units == 5_000
+    # a partly filled market order has its remainder cancelled: CANCELLED with fills (M6)
+    assert st.state is OrderState.CANCELLED and st.filled_units == 5_000
+    assert st.remaining_units == 5_000
 
 
 def test_reduce_only_and_margin_rejection() -> None:

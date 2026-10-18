@@ -13,6 +13,10 @@ Definitions:
 - **Locks**: daily P&L <= -loss limit -> `daily_loss` lock; >= +profit target ->
   `profit_target` lock. A lock blocks new entries until the next trading day; it survives
   restarts (persisted state) and cannot be released by hand.
+- **Lock precedence** (deterministic): `daily_loss` > `profit_target` > none. The loss limit is
+  checked on every observation, independently of an earlier profit-target lock: if the day
+  first reaches the target and then falls to the loss limit, the lock is upgraded to
+  `daily_loss` (and its flatten policy applies). A `daily_loss` lock is never downgraded.
 - **Kill switch**: blocks every new entry until released manually with confirmation. Exits are
   always allowed so risk can be reduced.
 """
@@ -182,13 +186,14 @@ class RiskManager:
         pct = self.daily_pnl_pct()
         s.day_low_pnl_pct = min(s.day_low_pnl_pct, pct)
         s.day_high_pnl_pct = max(s.day_high_pnl_pct, pct)
-        if s.lock is None:
-            if pct <= -self.config.daily_loss_limit_pct:
-                self._lock(Lock.DAILY_LOSS, pct, ts)
-                events.append(f"lock:{Lock.DAILY_LOSS.value}")
-            elif pct >= self.config.daily_profit_target_pct:
-                self._lock(Lock.PROFIT_TARGET, pct, ts)
-                events.append(f"lock:{Lock.PROFIT_TARGET.value}")
+        # precedence daily_loss > profit_target: the loss limit is evaluated on every
+        # observation, whatever lock is already engaged; a daily_loss lock is never replaced
+        if s.lock != Lock.DAILY_LOSS.value and pct <= -self.config.daily_loss_limit_pct:
+            self._lock(Lock.DAILY_LOSS, pct, ts)
+            events.append(f"lock:{Lock.DAILY_LOSS.value}")
+        elif s.lock is None and pct >= self.config.daily_profit_target_pct:
+            self._lock(Lock.PROFIT_TARGET, pct, ts)
+            events.append(f"lock:{Lock.PROFIT_TARGET.value}")
         return events
 
     def _lock(self, kind: Lock, pct: float, ts: datetime) -> None:
@@ -257,9 +262,15 @@ class RiskManager:
         now: datetime,
         currency: str,
         venue_leverage: float = 30.0,
+        ambiguous_pairs: Mapping[str, str] | None = None,
+        entry_block: str | None = None,
     ) -> RiskDecision:
         """Authorizes or refuses one request. `venue_leverage` is the broker's margin leverage
-        (the margin a position consumes); `config.max_leverage` caps total exposure."""
+        (the margin a position consumes); `config.max_leverage` caps total exposure.
+        `ambiguous_pairs` maps a pair to the client order id of an order whose outcome is still
+        unknown: no new entry on that pair until it is reconciled. `entry_block` blocks every
+        new entry (e.g. start-up reconciliation still pending). Exits are never blocked by
+        either."""
         cfg = self.config
         checks: list[Check] = []
         pos = positions.get(req.pair)
@@ -289,6 +300,20 @@ class RiskManager:
             )
 
         side = req.direction.entry_side
+        # ambiguous orders first: whatever else applies, the refusal names them
+        pending = (ambiguous_pairs or {}).get(req.pair)
+        ok(
+            "ambiguous_order",
+            pending is None,
+            "sem ordens ambíguas no par"
+            if pending is None
+            else f"ordem {pending} com resultado desconhecido neste par (a reconciliar)",
+        )
+        ok(
+            "reconciliation",
+            entry_block is None,
+            "sem reconciliação pendente" if entry_block is None else entry_block,
+        )
         same_dir = cur_units * side.sign > EPS
         if same_dir:
             ok("no_pyramiding", False, "já existe posição na mesma direção")

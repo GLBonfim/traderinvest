@@ -11,6 +11,11 @@ Lifecycle (ADR-0037):
 - orphan policy: when launched by the desktop (`orphan_timeout`), the engine stops itself if no
   authenticated client is connected for that long, so a crashed UI never leaves a hidden engine
   trading.
+- refused start: an untrustworthy configuration or state raises a classified `FxStartupError`
+  before the server listens; nothing is saved over the existing data (`__main__` exits with
+  `STARTUP_REFUSED_EXIT`, which the desktop never restarts automatically).
+- safety pause: an internal error during a tick pauses the engine with reason `safety`; the
+  pause is persisted, so a restart does not resume trading. Only the `resume` command does.
 """
 
 import asyncio
@@ -38,6 +43,7 @@ from app.engine.protocol import (
     encode,
 )
 from app.fx.config import FxConfig, load_config, merge, save_config
+from app.fx.errors import ConfigInvalidError, JournalIntegrityError
 from app.fx.orchestrator import ENGINE_VERSION, Orchestrator
 from app.fx.store import FxStore
 
@@ -80,19 +86,25 @@ class EngineService:
         self.stopping = asyncio.Event()
         self.bound_port: int | None = None
         self._last_client_at = time.monotonic()
+        self.store: FxStore | None = None
 
     # --- lifecycle --------------------------------------------------------------------------
 
     def _open(self) -> None:
         self.lock.acquire()
-        self.config: FxConfig = load_config(self.root)
+        try:
+            self.config: FxConfig = load_config(self.root)
+        except (ValueError, OSError) as exc:  # pydantic ValidationError is a ValueError
+            raise ConfigInvalidError(
+                f"config.json inválido ou ilegível ({type(exc).__name__})"
+            ) from exc
         self.store = FxStore(self.root / "fx.db")
         self.orch = Orchestrator(self.config, self.store)
         self.orch.listeners.append(self._on_event)
 
     async def run(self) -> None:
-        self._open()
         try:
+            self._open()
             server = await asyncio.start_server(self._handle, self.host, self.port, limit=MAX_LINE)
             self.bound_port = int(server.sockets[0].getsockname()[1])
             (self.root / "engine.json").write_text(
@@ -126,9 +138,10 @@ class EngineService:
 
     def _close(self) -> None:
         try:
-            if hasattr(self, "orch"):
+            if hasattr(self, "orch") and self.store is not None:
                 self.orch.save()
                 self.store.append("engine_stopped", {"reason": "shutdown"}, self.orch.market.now)
+            if self.store is not None:  # a refused start saves nothing over the existing data
                 self.store.close()
             with contextlib.suppress(OSError):
                 (self.root / "engine.json").unlink()
@@ -141,27 +154,34 @@ class EngineService:
 
     # --- loops ------------------------------------------------------------------------------
 
+    def safe_tick(self) -> None:
+        """One tick; an internal error pauses the engine with a persisted `safety` reason."""
+        if self.orch.paused:
+            return
+        try:
+            self.orch.tick()
+        except Exception as exc:  # a failing tick pauses trading; it never crashes silently
+            log.exception("tick failed; engine paused")
+            try:
+                self.orch.pause("safety", f"erro interno ({type(exc).__name__})")
+            except Exception:  # the pause itself could not be persisted: still pause here
+                log.exception("could not persist the safety pause")
+                self.orch.paused, self.orch.pause_reason = True, "safety"
+            self._broadcast(
+                {
+                    "type": "event",
+                    "event": {
+                        "kind": "engine_error",
+                        "ts": datetime.now(UTC).isoformat(),
+                        "payload": {"message": "erro interno: motor em pausa (ver registo)"},
+                    },
+                }
+            )
+
     async def _ticker(self) -> None:
         while not self.stopping.is_set():
             started = time.monotonic()
-            if not self.orch.paused:
-                try:
-                    self.orch.tick()
-                except Exception:  # a failing tick pauses trading; it never crashes silently
-                    log.exception("tick failed; engine paused")
-                    self.orch.paused = True
-                    self._broadcast(
-                        {
-                            "type": "event",
-                            "event": {
-                                "kind": "engine_error",
-                                "ts": datetime.now(UTC).isoformat(),
-                                "payload": {
-                                    "message": "erro interno: motor em pausa (ver registo)"
-                                },
-                            },
-                        }
-                    )
+            self.safe_tick()
             interval = 1.0 / self.orch.config.simulation.steps_per_second
             await asyncio.sleep(max(0.0, interval - (time.monotonic() - started)))
 
@@ -266,16 +286,14 @@ class EngineService:
 
     def _run_command(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         o = self.orch
+        store = o.store
         if name == "snapshot":
             return {"snapshot": o.snapshot()}
         if name == "pause":
-            o.paused = True
-            o.save()
-            o.journal("engine_paused", {})
+            o.pause("manual")
             return {}
         if name == "resume":
-            o.paused = False
-            o.journal("engine_resumed", {})
+            o.resume()
             return {}
         if name == "set_speed":
             cfg = merge(o.config, {"simulation": {"steps_per_second": float(args["value"])}})
@@ -312,17 +330,18 @@ class EngineService:
                 k: args[k] for k in ("account_currency", "initial_capital", "pairs") if k in args
             }
             cfg = merge(o.config, patch)
+            ok, bad = store.verify()
+            if not ok:  # never start a new account on top of a broken journal
+                raise JournalIntegrityError(f"registo de eventos inválido no evento {bad}")
             save_config(cfg, self.root)
-            self.store.append(
-                "account_reset", {"config": cfg.model_dump(mode="json")}, o.market.now
-            )
-            self.store.clear_state()
-            self.orch = Orchestrator(cfg, self.store)
+            store.append("account_reset", {"config": cfg.model_dump(mode="json")}, o.market.now)
+            store.clear_state()
+            self.orch = Orchestrator(cfg, store)
             self.orch.listeners.append(self._on_event)
             return {}
         if name == "journal.verify":
-            ok, bad = self.store.verify()
-            return {"ok": ok, "first_bad_seq": bad, "events": self.store.count()}
+            ok, bad = store.verify()
+            return {"ok": ok, "first_bad_seq": bad, "events": store.count()}
         if name == "shutdown":
             self.stop()
             return {}

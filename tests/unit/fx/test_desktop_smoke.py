@@ -98,3 +98,21 @@ def test_main_window_panels_render_without_engine(app: QApplication, snapshot: d
     assert "Capital" in w.kpi.text()
     w._quitting = True
     w.close()
+
+
+def test_environment_badge_comes_from_the_validated_snapshot(
+    app: QApplication,
+    snapshot: dict,  # type: ignore[type-arg]
+) -> None:
+    from app.desktop.strings import t
+
+    w = MainWindow(autostart=False)
+    assert w.badge.text() == t("env_unknown")  # nothing fixed before the engine answers
+    w._on_snapshot(snapshot)
+    assert snapshot["environment_validated"] and w.badge.text() == t("env_sim")
+    w._set_badge({**snapshot, "environment": "demo"})
+    assert w.badge.text() == t("env_demo")
+    w._on_disconnected()
+    assert w.badge.text() == t("env_offline")
+    w._quitting = True
+    w.close()

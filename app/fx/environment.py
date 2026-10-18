@@ -8,12 +8,18 @@
   (ADR-0006). Enabling it requires a new ADR and the owner's explicit approval.
 
 An adapter never falls back from one environment to another (no demo<->real fallback).
+
+`ENABLED` lists the environments this build can run (an adapter exists for them): only
+SIMULATION. `validate_environment` is the single check, done by the engine before any
+processing, that the configured environment, the adapter's declared environment and the
+enabled set agree.
 """
 
 from enum import StrEnum
 from typing import NoReturn
 
 from app.core.safety import refuse_real_money_order
+from app.fx.errors import EnvironmentMismatchError
 
 
 class Environment(StrEnum):
@@ -49,3 +55,27 @@ def parse_environment(text: str) -> Environment:
         return Environment(text.strip().lower())
     except ValueError as exc:
         raise ValueError(f"unknown environment {text!r}") from exc
+
+
+# Environments with an implemented adapter in this build. DEMO is a valid identifier but has no
+# adapter yet; REAL is blocked by `require_executable` whatever this set says.
+ENABLED: frozenset[Environment] = frozenset({Environment.SIMULATION})
+
+
+def validate_environment(configured: Environment, adapter_environment: Environment) -> Environment:
+    """The one source of truth for the running environment. Raises
+    `RealMoneyExecutionBlockedError` for REAL and `EnvironmentMismatchError` when the
+    configuration, the adapter and the enabled environments disagree."""
+    require_executable(configured)
+    require_executable(adapter_environment)
+    if configured not in ENABLED:
+        raise EnvironmentMismatchError(
+            f"o ambiente configurado '{configured.value}' não está ativo nesta versão "
+            f"(ativos: {', '.join(sorted(e.value for e in ENABLED))})"
+        )
+    if adapter_environment is not configured:
+        raise EnvironmentMismatchError(
+            f"o adaptador implementa '{adapter_environment.value}' mas a configuração "
+            f"pede '{configured.value}'"
+        )
+    return configured
