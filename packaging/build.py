@@ -5,6 +5,7 @@ run PyInstaller (one-folder build in dist/TraderInvestFX), smoke-test the engine
 built executable, and zip a portable archive. No signing (see docs/commercial-readiness.md).
 """
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -94,15 +95,21 @@ def smoke_test_engine() -> None:
             argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
         )
         started = time.monotonic()
-        line = proc.stdout.readline().decode() if proc.stdout else ""
-        print(f"engine smoke test: {line.strip()!r} after {time.monotonic() - started:.1f}s")
         try:
-            proc.wait(timeout=60)  # orphan policy: exits by itself without a client
+            stdout, stderr = proc.communicate(timeout=60)
         except subprocess.TimeoutExpired as exc:
             proc.kill()
+            proc.communicate()  # reap the child before cleaning up its data directory
             raise SystemExit("engine did not stop by itself (orphan policy)") from exc
-        if not line.startswith("ENGINE_READY"):
-            raise SystemExit("the frozen engine did not start")
+        output = stdout.decode("utf-8", errors="replace")
+        ready = any(line.startswith("ENGINE_READY ") for line in output.splitlines())
+        print(
+            f"engine smoke test: ready={ready}, exit={proc.returncode} "
+            f"after {time.monotonic() - started:.1f}s"
+        )
+        if not ready or proc.returncode != 0:
+            diagnostic = stderr.decode("utf-8", errors="replace")[-4000:]
+            raise SystemExit(f"the frozen engine failed (exit {proc.returncode}): {diagnostic}")
 
 
 def smoke_test_ui() -> None:
@@ -133,7 +140,40 @@ def portable_zip() -> Path:
     return out
 
 
+def compile_installer() -> Path | None:
+    """Compile with an existing Inno Setup 6 installation, when available."""
+    compiler = shutil.which("ISCC.exe") or shutil.which("ISCC")
+    if compiler is None:
+        for variable in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"):
+            base = os.environ.get(variable)
+            if base:
+                relative = (
+                    Path("Programs") / "Inno Setup 6" / "ISCC.exe"
+                    if variable == "LOCALAPPDATA"
+                    else Path("Inno Setup 6") / "ISCC.exe"
+                )
+                candidate = Path(base) / relative
+                if candidate.is_file():
+                    compiler = str(candidate)
+                    break
+    if compiler is None:
+        print("installer: skipped (Inno Setup 6 / ISCC.exe not found; portable ZIP is ready)")
+        return None
+    from app.desktop import APP_VERSION
+
+    subprocess.run(  # noqa: S603 - installed compiler, fixed repository script
+        [compiler, str(ROOT / "packaging" / "installer.iss")], check=True, cwd=ROOT
+    )
+    output = ROOT / "dist" / f"TraderInvestFX-{APP_VERSION}-setup.exe"
+    if not output.is_file():
+        raise SystemExit(f"installer compiler did not produce {output}")
+    return output
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--installer", action="store_true", help="also compile with Inno Setup 6")
+    args = parser.parse_args()
     print("icon:", render_icon())
     print("version:", version_resource())
     if DIST.exists():
@@ -144,6 +184,10 @@ def main() -> None:
     size = sum(p.stat().st_size for p in DIST.rglob("*") if p.is_file()) / 1e6
     print(f"dist: {DIST} ({size:.0f} MB)")
     print("zip:", portable_zip())
+    if args.installer:
+        output = compile_installer()
+        if output is not None:
+            print("installer:", output)
 
 
 if __name__ == "__main__":

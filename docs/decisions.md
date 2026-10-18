@@ -1100,6 +1100,17 @@ acceptance difference not listed as intended reverts that step.
      (efficiency ratio, ATR percentile, spread/ATR; can veto entries), Portfolio Coordinator
      (regime-weighted consensus, conflict = no trade, currency-diversification penalty, at most
      one new entry per cycle). Agents read closed bars only (tested for look-ahead).
+     *Revision 2026-10-18 (agents v2):* the agent logic is a set of vectorised, causal signal
+     functions (`app/fx/agents/signals.py`) used by both the research backtests and the live
+     agents: Trend joins an established trend on a pullback to EMA(20) with an EMA(200)
+     context; Momentum trades range breakouts with expanding ATR and non-exhausted RSI; Mean
+     Reversion fades a confirmed rejection of the Bollinger band only in a ranging market;
+     the Regime filter also vetoes illiquid hours and the rollover window. Every trade has an
+     ATR stop, a target with RR >= 1.2 and a time stop; positions go flat before the weekend.
+     The Coordinator v2 lets only APPROVED agents open (`app/fx/agents/calibrated.py`,
+     pre-registered out-of-sample rule, docs/fx-agent-validation.md), resolves conflicts (no
+     trade), exits only on the owner's time stop, and orders entries by score with crowded
+     currencies last (scores are never lowered).
   6. **Scores** are heuristic confidences in [0, 1], never probabilities; the UI says so.
   7. **Order lifecycle** (`app/fx/lifecycle.py`): SIGNAL → PROPOSAL → AUTHORIZED | REFUSED →
      SENT → ACCEPTED | REJECTED | UNKNOWN → PARTIALLY_FILLED → FILLED (+ CANCELLED, EXPIRED).
@@ -1197,6 +1208,13 @@ acceptance difference not listed as intended reverts that step.
      flatten policy. A `daily_loss` lock is never downgraded.
   5. **Kill switch**: blocks all new entries until released manually with the word `LIBERTAR`;
      survives restarts and day rolls; may be engaged with "flatten all".
+     *Revision 2026-10-18 (maximum drawdown breaker):* equity falling `max_drawdown_pct`
+     (default 20 %, validated in (0, 90]) below its persisted peak engages the kill switch.
+     It blocks NEW entries only: it does not close open positions and does not guarantee that
+     losses stop at that level. Added after the holdout diagnostic replay (all agents, incl.
+     unapproved) lost 76 % in a year with a single daily-loss lock; an exploratory replay
+     run after that observation stopped new entries at about -20 % (not an independent
+     validation; docs/fx-agent-validation.md).
   6. **Entry checks** (all must pass): environment not REAL; kill switch off; no lock; entry
      available; market open and outside 15 min around the rollover; fresh quote (≤ 120 s); price
      origin allowed (DEMO: LIVE only); spread ≤ 3 pips; score ≥ 0.55; stop loss present and on

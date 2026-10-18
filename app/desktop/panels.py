@@ -438,6 +438,7 @@ class RiskPanel(QWidget):
                 ("range", "Mín / máx do dia"),
                 ("lock", "Bloqueio diário"),
                 ("kill", "Kill switch"),
+                ("dd", "Drawdown desde o pico"),
             ]
         )
         box.setLayout(grid)
@@ -489,6 +490,10 @@ class RiskPanel(QWidget):
         )
         self.kv["lock"].setText("■ " + str(r.get("lock_label")) if r.get("lock") else "○ nenhum")
         self.kv["kill"].setText("■ ATIVO" if r.get("kill_switch") else "○ inativo")
+        dd, dd_max = float(r.get("drawdown_pct") or 0.0), r.get("max_drawdown_pct")
+        self.kv["dd"].setText(
+            f"{pct(-dd)} (máx −{dd_max:g}% → kill switch)" if dd_max else pct(-dd)
+        )
         self.kill.setEnabled(not r.get("kill_switch"))
         self.release.setEnabled(bool(r.get("kill_switch")))
         self.flatten.setEnabled(bool(snap.get("positions")))
@@ -499,9 +504,10 @@ class RiskPanel(QWidget):
             f"+{cfg.get('daily_profit_target_pct')}% · risco por operação "
             f"{cfg.get('risk_per_trade_pct')}% · alavancagem máx "
             f"{cfg.get('max_leverage')}x · spread máx {cfg.get('max_spread_pips')} pips · "
-            f"pontuação mín {cfg.get('min_score')}. Os bloqueios persistem após reinício e só "
-            "terminam no dia FX seguinte (17:00 Nova Iorque). O kill switch só se liberta "
-            "manualmente com confirmação."
+            f"pontuação mín {cfg.get('min_score')} · drawdown máx "
+            f"−{cfg.get('max_drawdown_pct')}% desde o pico (ativa o kill switch). Os bloqueios "
+            "persistem após reinício e só terminam no dia FX seguinte (17:00 Nova Iorque). O "
+            "kill switch só se liberta manualmente com confirmação."
         )
 
 
@@ -527,6 +533,7 @@ class AgentsPanel(QWidget):
         self.desc.setWordWrap(True)
         self.status = QLabel()
         self.status.setObjectName("Muted")
+        self.status.setWordWrap(True)
         note = QLabel("ⓘ " + t("score_note"))
         note.setWordWrap(True)
         note.setStyleSheet(f"color: {P.amber};")
@@ -570,10 +577,21 @@ class AgentsPanel(QWidget):
         self.title.setStyleSheet(f"color: {AGENT_COLORS[key]};")
         self.desc.setText(desc)
         st = self.snap.get("agents", {}).get(key, {})
+        approved = key in self.snap.get("approved_agents", [])
+        demo = bool(self.snap.get("unapproved_demo"))
+        if key in ("regime", "coordinator"):
+            verdict = "filtro do sistema"
+        elif approved:
+            verdict = "■ APROVADO (validação fora da amostra)"
+        elif demo:
+            verdict = "▲ NÃO APROVADO — a operar só por modo de demonstração (preços sintéticos)"
+        else:
+            verdict = "○ EM OBSERVAÇÃO — não aprovado na validação; não abre posições"
         self.status.setText(
             f"Última execução: {hhmm(st.get('last_run'))} · sinais emitidos: "
-            f"{st.get('signals', 0)} · v1.0.0"
+            f"{st.get('signals', 0)} · v2.0.0 · {verdict}"
         )
+        self.status.setToolTip(str(self.snap.get("agents_validation", "")))
         rows = []
         if key == "coordinator":
             for sym, d in self.snap.get("decisions", {}).items():

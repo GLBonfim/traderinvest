@@ -116,3 +116,36 @@ def test_environment_badge_comes_from_the_validated_snapshot(
     assert w.badge.text() == t("env_offline")
     w._quitting = True
     w.close()
+
+
+@pytest.mark.parametrize(
+    ("approved", "demo", "expected", "forbidden"),
+    [
+        ([], True, "NÃO APROVADO", "■ APROVADO"),
+        ([], False, "EM OBSERVAÇÃO", "■ APROVADO"),
+        (["trend"], False, "■ APROVADO", "NÃO APROVADO"),
+    ],
+)
+def test_agents_panel_never_shows_a_demo_agent_as_approved(
+    app: QApplication,
+    snapshot: dict,  # type: ignore[type-arg]
+    approved: list[str],
+    demo: bool,
+    expected: str,
+    forbidden: str,
+) -> None:
+    from app.desktop.panels import AgentsPanel
+
+    panel = AgentsPanel()
+    panel.select("trend")
+    panel.update_from(
+        {
+            **snapshot,
+            "approved_agents": approved,
+            "executing_agents": ["mean_reversion", "momentum", "trend"],
+            "unapproved_demo": demo,
+        }
+    )
+    text = panel.status.text()
+    assert expected in text and forbidden not in text
+    assert panel.status.wordWrap()

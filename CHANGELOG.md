@@ -26,6 +26,22 @@ versioning: [SemVer](https://semver.org/).
   engine smoke test, portable zip, third-party notices, draft commercial licence.
 - 90 tests in `tests/unit/fx`; docs `docs/fx-platform.md`, `docs/commercial-readiness.md`.
 
+### Added (agents v2 and validation, 2026-10-18)
+- Agents v2 on shared, causal vectorised signals (`app/fx/agents/signals.py`), coordinator v2
+  (approved agents only, conflicts, owner-only exits), time stops, flat before the weekend.
+- Research lab `app/fx/research`: 6 years of IBKR M15 BID/ASK bars for 9 pairs (read-only,
+  manifest with SHA-256), bid/ask backtester with conservative fills and costs in R,
+  pre-registered dev/validation/holdout study (Holm-adjusted block bootstrap, random-timing
+  baseline, M15 vs H1), full-system replay through the real orchestrator, report generator.
+- Result: **no agent approved** (holdout evaluated once). `calibrated.APPROVED` is empty; the
+  interface shows agents "em observação"; `simulation.allow_unapproved_agents` enables a
+  clearly labelled demonstration mode on synthetic prices only.
+- Fixed: drawdown in R and in the replay now counts from the starting capital.
+- Maximum drawdown breaker (default 20 % below the persisted equity peak) engages the kill
+  switch; it blocks new entries only (open positions keep their stops). Shown in the Risk
+  panel and adjustable in Settings. Settings also offer the SIMULATION-only demonstration
+  toggle for unapproved agents (off by default).
+
 ### Added (IBKR phase A, 2026-10-18)
 - `app/fx/ibkr`: read-only, paper-only IBKR connection through IB Gateway/TWS (`ib_async`
   2.1.0, BSD): quotes (LIVE/DELAYED origin), MIDPOINT M15 bars, account values, forex

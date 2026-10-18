@@ -117,6 +117,7 @@ class SettingsDialog(QDialog):
         self.positions.setValue(int(r["max_open_positions"]))
         self.spread = self._dbl(0.1, 50, r["max_spread_pips"], " pips")
         self.score = self._dbl(0, 1, r["min_score"], "", 2)
+        self.max_dd = self._dbl(1, 90, r.get("max_drawdown_pct", 20.0), " %")
         self.flatten_loss = QCheckBox("Fechar posições ao atingir a perda diária")
         self.flatten_loss.setChecked(bool(r["flatten_on_daily_loss"]))
         self.flatten_target = QCheckBox("Fechar posições ao atingir o objetivo diário")
@@ -129,9 +130,29 @@ class SettingsDialog(QDialog):
         f.addRow("Máx. posições abertas", self.positions)
         f.addRow("Spread máximo", self.spread)
         f.addRow("Pontuação mínima (não é probabilidade)", self.score)
+        f.addRow("Drawdown máximo desde o pico (kill switch)", self.max_dd)
         f.addRow(self.flatten_loss)
         f.addRow(self.flatten_target)
         lay.addWidget(risk)
+        demonstration = QGroupBox("Demonstração com preços sintéticos")
+        demo_layout = QVBoxLayout(demonstration)
+        self.synthetic_demo = QCheckBox("Demonstrar agentes NÃO APROVADOS na simulação")
+        self._simulation = config.get("environment") == "simulation"
+        self.synthetic_demo.setChecked(
+            self._simulation
+            and bool(config.get("simulation", {}).get("allow_unapproved_agents", False))
+        )
+        self.synthetic_demo.setEnabled(self._simulation)
+        self.demo_notice = QLabel(
+            "Os agentes não passaram a validação estatística. Esta opção permite que abram "
+            "posições apenas com preços sintéticos em SIMULAÇÃO. Demonstra a interface e as "
+            "regras de risco; não comprova desempenho em mercados reais."
+        )
+        self.demo_notice.setWordWrap(True)
+        self.demo_notice.setStyleSheet(f"color: {P.amber};")
+        demo_layout.addWidget(self.synthetic_demo)
+        demo_layout.addWidget(self.demo_notice)
+        lay.addWidget(demonstration)
         acct = QGroupBox("Conta simulada (alterar exige reiniciar a conta)")
         g = QFormLayout(acct)
         self.currency = QComboBox()
@@ -160,7 +181,7 @@ class SettingsDialog(QDialog):
         return s
 
     def risk_patch(self) -> dict[str, Any]:
-        return {
+        patch: dict[str, Any] = {
             "risk": {
                 "max_entries_per_day": self.entries.value(),
                 "daily_loss_limit_pct": self.loss.value(),
@@ -170,10 +191,15 @@ class SettingsDialog(QDialog):
                 "max_open_positions": self.positions.value(),
                 "max_spread_pips": self.spread.value(),
                 "min_score": self.score.value(),
+                "max_drawdown_pct": self.max_dd.value(),
                 "flatten_on_daily_loss": self.flatten_loss.isChecked(),
                 "flatten_on_profit_target": self.flatten_target.isChecked(),
             }
         }
+
+        if self._simulation:
+            patch["simulation"] = {"allow_unapproved_agents": self.synthetic_demo.isChecked()}
+        return patch
 
     def account_change(self) -> dict[str, Any] | None:
         cur, cap = self.currency.currentText(), self.capital.value()

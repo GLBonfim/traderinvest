@@ -227,3 +227,40 @@ def test_conversion_used_for_sizing_jpy_pair() -> None:
     dist = 150.40 - q["USDJPY"].bid
     expected = (50.0 / (dist * Converter(q).rate("JPY", "EUR"))) // 1000 * 1000
     assert d.units == expected
+
+
+def test_max_drawdown_breaker_engages_the_kill_switch_and_persists() -> None:
+    rm = manager(max_drawdown_pct=20.0)
+    rm.observe(12_000.0, NOW + timedelta(hours=1))  # new peak
+    for day in range(1, 7):  # a slow bleed (-24 %) that never hits the -5 % daily limit
+        rm.observe(12_000.0 * (1 - 0.04 * day), NOW + timedelta(days=day))
+    assert rm.state.peak_equity == 12_000.0
+    assert rm.state.kill_switch and "drawdown máximo" in str(rm.state.kill_reason)
+    assert rm.state.lock is None  # no daily lock was involved
+    again = RiskManager(rm.config, RiskState.from_dict(rm.state.to_dict()), CAL)
+    again.observe(9_000.0, NOW + timedelta(days=7))
+    assert again.state.kill_switch and again.state.peak_equity == 12_000.0
+    assert "kill_switch" in codes(
+        evaluate(
+            again, long_req(), now=NOW + timedelta(days=7), q=quotes(ts=NOW + timedelta(days=7))
+        )
+    )
+
+
+def test_drawdown_below_the_limit_does_not_engage() -> None:
+    rm = manager(max_drawdown_pct=20.0)
+    assert rm.observe(8_100.0, NOW + timedelta(days=1)) == ["day_rolled"]
+    assert not rm.state.kill_switch
+    assert rm.status()["drawdown_pct"] == pytest.approx(19.0)
+
+
+def test_old_state_without_peak_still_loads() -> None:
+    d = RiskState().to_dict()
+    del d["peak_equity"]
+    assert RiskState.from_dict(d).peak_equity is None
+
+
+@pytest.mark.parametrize("bad", [0.0, -5.0, 95.0, float("nan"), float("inf")])
+def test_max_drawdown_config_is_validated(bad: float) -> None:
+    with pytest.raises(ValueError, match="max_drawdown_pct"):
+        RiskConfig(max_drawdown_pct=bad)

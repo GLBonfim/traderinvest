@@ -1,10 +1,24 @@
 ; Inno Setup 6 script for TraderInvest FX (per-user install, no admin rights needed).
 ; Build the app first (packaging/build.py), then: ISCC packaging\installer.iss
-; Not compiled in the development environment (Inno Setup is not installed there).
+; Optional compilation is available through packaging/build.py --installer.
 ; Sign the resulting setup .exe before distributing it (see docs/commercial-readiness.md).
 
 #define AppName "TraderInvest FX"
-#define AppVersion "0.1.0"
+#define VersionSource FileOpen(AddBackslash(SourcePath) + "..\app\desktop\__init__.py")
+#define VersionLine
+#sub ReadVersionLine
+  #expr VersionLine = FileRead(VersionSource)
+  #if Pos("APP_VERSION = ", VersionLine) == 1
+    #define public AppVersion Trim(StringChange(Copy(VersionLine, Pos("=", VersionLine) + 1, Len(VersionLine)), '"', ""))
+  #endif
+#endsub
+#for {0; VersionSource && !FileEof(VersionSource); 0} ReadVersionLine
+#if VersionSource
+  #expr FileClose(VersionSource)
+#endif
+#ifndef AppVersion
+  #error APP_VERSION was not found in app/desktop/__init__.py
+#endif
 #define AppExe "TraderInvestFX.exe"
 
 [Setup]
@@ -22,7 +36,7 @@ UninstallDisplayIcon={app}\{#AppExe}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-LicenseFile=LICENSE-COMMERCIAL-DRAFT.md
+InfoBeforeFile=RISK-NOTICE-PT.txt
 
 [Files]
 Source: "..\dist\TraderInvestFX\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion

@@ -194,8 +194,8 @@ def summarize(trades: pd.DataFrame, days: float | None = None) -> dict[str, floa
             "mean_cost_r": 0.0,
         }
     wins, losses = r[r > 0].sum(), -r[r < 0].sum()
-    equity = np.cumsum(r)
-    dd = float(np.max(np.maximum.accumulate(equity) - equity)) if n else 0.0
+    equity = np.concatenate([[0.0], np.cumsum(r)])  # the curve starts at 0 R (no trade yet)
+    dd = float(np.max(np.maximum.accumulate(equity) - equity))
     sd = float(np.std(r, ddof=1)) if n > 1 else 0.0
     out = {
         "trades": float(n),

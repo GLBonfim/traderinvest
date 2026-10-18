@@ -1,0 +1,17 @@
+﻿TraderInvest FX — informação antes da instalação
+
+Aplicação para simulação e investigação. O ambiente REAL está bloqueado no código.
+Resultados históricos ou simulados não garantem resultados futuros. Os agentes
+podem não apresentar vantagem estatística. Este software não fornece
+aconselhamento financeiro nem promete rendimentos.
+
+Forex e produtos alavancados envolvem risco elevado de perda de dinheiro.
+A ligação IBKR paper disponível destina-se à leitura de dados de uma conta
+de prática; esta instalação não autoriza operações com dinheiro real.
+
+Este aviso é informativo e não constitui uma licença comercial ou contrato.
+O documento LICENSE-COMMERCIAL-DRAFT.md é um rascunho para revisão futura.
+Consulte THIRD_PARTY_NOTICES.md para as licenças dos componentes incluídos.
+
+A desinstalação preserva os dados locais e o diário de auditoria em
+%LOCALAPPDATA%\TraderInvestFX.

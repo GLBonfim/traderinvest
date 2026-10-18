@@ -15,6 +15,7 @@ Portfolio Coordinator), a central orchestrator and a central risk manager, shown
 isometric pixel-art operations room. SIMULATION environment only (synthetic prices, no real
 money). Run `uv run python -m app.desktop`; build the `.exe` with
 `uv run --group build python packaging/build.py`. Details: [docs/fx-platform.md](docs/fx-platform.md),
+installation: [docs/install.md](docs/install.md),
 commercial notes: [docs/commercial-readiness.md](docs/commercial-readiness.md),
 decisions: ADR-0036 to ADR-0038.
 
@@ -55,8 +56,7 @@ INCREMENTAL EDGE FOUND** (out-of-sample AUC ≈ 0.5, accuracy below "always up")
 risk-management layer (sizing, limits, locks, stops) measured against a no-overlay control;
 it is a control layer, not an alpha source. Phase 12 adds paper trading: a **local
 simulation that does not transmit orders to any brokerage or market**, with restart-safe
-accounts and an append-only ledger. There are
-**no indicators, no signals, no strategies and no trading logic** yet.
+accounts and an append-only ledger.
 
 ## Principles
 

@@ -126,3 +126,12 @@ def test_one_position_at_a_time_and_summary() -> None:
     s = summarize(t, days=1)
     assert s["trades"] == len(t) and s["trades_per_day"] == len(t)
     assert summarize(t.iloc[:0])["trades"] == 0
+
+
+@pytest.mark.parametrize(
+    ("r", "dd"),
+    [([-1.0], 1.0), ([-1.0, -1.0], 2.0), ([2.0, -1.0, -1.0, 3.0], 2.0), ([1.0, 1.0], 0.0)],
+)
+def test_max_drawdown_counts_from_the_starting_capital(r: list[float], dd: float) -> None:
+    trades = pd.DataFrame({"r_net": r, "r_cost": 0.0, "bars": 1})
+    assert summarize(trades)["max_dd_r"] == pytest.approx(dd)

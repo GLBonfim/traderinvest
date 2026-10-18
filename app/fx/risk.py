@@ -19,8 +19,15 @@ Definitions:
   `daily_loss` (and its flatten policy applies). A `daily_loss` lock is never downgraded.
 - **Kill switch**: blocks every new entry until released manually with confirmation. Exits are
   always allowed so risk can be reduced.
+- **Maximum drawdown breaker**: when equity falls `max_drawdown_pct` below its highest observed
+  value (persisted), the kill switch is engaged, which blocks NEW entries only. It does not
+  close open positions (their stops stay in place) and does not guarantee that losses stop
+  at that level (gaps, slippage, open positions). Added after a diagnostic replay of
+  unvalidated agents lost 76 % in a year with a single daily-loss lock: daily limits alone
+  cannot stop a slow bleed.
 """
 
+import math
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
@@ -53,6 +60,7 @@ class RiskConfig:
     unit_step: float = 1_000.0
     flatten_on_daily_loss: bool = True
     flatten_on_profit_target: bool = False
+    max_drawdown_pct: float = 20.0  # from the equity peak; engages the kill switch
 
     def __post_init__(self) -> None:
         if self.max_entries_per_day < 0:
@@ -67,6 +75,8 @@ class RiskConfig:
                 raise ValueError(f"{name} must be > 0")
         if self.risk_per_trade_pct > self.daily_loss_limit_pct:
             raise ValueError("risk_per_trade_pct cannot exceed the daily loss limit")
+        if not (math.isfinite(self.max_drawdown_pct) and 0 < self.max_drawdown_pct <= 90):
+            raise ValueError("max_drawdown_pct must be finite and in (0, 90]")
 
 
 class Lock(StrEnum):
@@ -95,6 +105,7 @@ class RiskState:
     last_equity: float | None = None
     day_low_pnl_pct: float = 0.0
     day_high_pnl_pct: float = 0.0
+    peak_equity: float | None = None
     version: int = 1
 
     def to_dict(self) -> dict[str, Any]:
@@ -183,6 +194,13 @@ class RiskManager:
             s.day_low_pnl_pct = s.day_high_pnl_pct = 0.0
             events.append("day_rolled")
         s.last_equity = equity
+        s.peak_equity = equity if s.peak_equity is None else max(s.peak_equity, equity)
+        drawdown = 100.0 * (1 - equity / s.peak_equity) if s.peak_equity > 0 else 0.0
+        if drawdown >= self.config.max_drawdown_pct and not s.kill_switch:
+            self.engage_kill_switch(
+                f"drawdown máximo atingido ({drawdown:.1f} % abaixo do pico)", ts
+            )
+            events.append("kill:max_drawdown")
         pct = self.daily_pnl_pct()
         s.day_low_pnl_pct = min(s.day_low_pnl_pct, pct)
         s.day_high_pnl_pct = max(s.day_high_pnl_pct, pct)
@@ -501,6 +519,11 @@ class RiskManager:
             "kill_at": s.kill_at,
             "day_low_pnl_pct": s.day_low_pnl_pct,
             "day_high_pnl_pct": s.day_high_pnl_pct,
+            "peak_equity": s.peak_equity,
+            "drawdown_pct": (
+                100.0 * (1 - (s.last_equity or 0) / s.peak_equity) if s.peak_equity else 0.0
+            ),
+            "max_drawdown_pct": cfg.max_drawdown_pct,
         }
 
 

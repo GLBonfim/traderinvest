@@ -94,6 +94,43 @@ no data (check forex permissions / market data sharing with the paper account).
 
 Phase B (sending orders to the paper account only) needs the owner's explicit authorization.
 
+## Agent research and validation
+
+Agents v2 are validated on real IBKR history before they may trade (report:
+[fx-agent-validation.md](fx-agent-validation.md)). With the IB Gateway open in Paper:
+
+```powershell
+uv run python -m app.fx.research.history --years 6    # M15 BID/ASK bars, read-only, resumable
+uv run python -m app.fx.research.study calibrate       # development + validation, pre-registration
+uv run python -m app.fx.research.study holdout         # the holdout, ONCE (refuses to re-run)
+uv run python -m app.fx.research.study system          # whole product replayed on the holdout
+uv run python -m app.fx.research.report                # writes docs/fx-agent-validation.md
+```
+
+Data and results live under `data/fx/` (not versioned). Only agents listed in
+`app/fx/agents/calibrated.py` `APPROVED` may open positions.
+
+**Result (2026-10-18): no agent passed the pre-registered out-of-sample rule**, so `APPROVED`
+is empty: the agents analyse and show their proposals ("em observação") but the system opens
+no position. See [fx-agent-validation.md](fx-agent-validation.md).
+
+### Demonstration mode (SIMULATION only)
+
+To see the agents trading in the interface, use **Ficheiro → Configuração →
+"Demonstrar agentes NÃO APROVADOS na simulação"** (off by default; only enabled in
+SIMULATION; takes effect immediately without resetting the account; untick it to stop new
+demonstration entries). The equivalent setting in `%LOCALAPPDATA%\TraderInvestFX\config.json`
+is:
+
+```json
+{"simulation": {"allow_unapproved_agents": true}}
+```
+
+> **Warning:** this lets agents that FAILED validation trade **synthetic** prices in
+> SIMULATION. It demonstrates the interface and the risk rules; it says nothing about real
+> performance. It has no effect in any other environment, and the Agents panel marks each
+> agent "NÃO APROVADO — modo de demonstração".
+
 ## Arranque recusado (recuperação manual)
 
 The engine refuses to start, before processing anything, when its configuration or persisted
@@ -136,6 +173,12 @@ coordinator, the hash-chained store (tamper and deletion detection), the orchest
 confirmations, shutdown, restart) and offscreen UI smoke tests.
 
 ## Known limitations
+
+- The maximum drawdown breaker (kill switch at 20 % below the equity peak) blocks new
+  entries only; it does not close open positions or cap losses exactly at that level.
+- The v2 agents have **no demonstrated edge** on six years of IBKR data (holdout included):
+  none is approved to open positions. New strategies must pass the same pre-registered
+  protocol before `APPROVED` changes.
 
 - Only the SIMULATION environment exists. A DEMO adapter (broker practice API) and a live data
   provider are not implemented: they need a chosen provider and the owner's own practice

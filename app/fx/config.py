@@ -42,6 +42,7 @@ class RiskSettings(BaseModel):
     min_risk_reward: float = Field(1.2, ge=0, le=10)
     flatten_on_daily_loss: bool = True
     flatten_on_profit_target: bool = False
+    max_drawdown_pct: float = Field(20.0, gt=0, le=90)
 
     @model_validator(mode="after")
     def _per_trade_within_daily(self) -> "RiskSettings":

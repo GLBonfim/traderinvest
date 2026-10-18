@@ -315,6 +315,9 @@ def test_unapproved_agents_trade_only_in_a_synthetic_demo(tmp_path: object) -> N
     )
     o = orchestrator(Path(str(tmp_path)) / "b", demo)
     assert o.coordinator.approved == ALL
+    snap = o.snapshot()
+    assert snap["approved_agents"] == []  # the demo never counts as a statistical approval
+    assert snap["executing_agents"] == sorted(ALL) and snap["unapproved_demo"] is True
 
 
 def test_positions_go_flat_before_the_weekend(tmp_path: object) -> None:

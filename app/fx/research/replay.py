@@ -280,8 +280,9 @@ def run_replay(
     locks = [e["payload"] for e in o.store.recent(10**6, ("risk_lock",))]
     eq = pd.Series(daily).sort_index()
     eq = eq[eq.index != ""]
-    rets = eq.pct_change().dropna()
-    peak = eq.cummax()
+    curve = np.concatenate([[cfg.initial_capital], eq.to_numpy(float)])  # from the start
+    rets = pd.Series(curve).pct_change().dropna()
+    peak = np.maximum.accumulate(curve)
     entries = [i for i in o.intents.values() if i.is_entry and i.filled_units > 0]
     per_day = pd.Series(
         [o.calendar.trading_day(datetime.fromisoformat(i.created_at)).isoformat() for i in entries]
@@ -292,7 +293,7 @@ def run_replay(
         "approved": sorted(approved),
         "final_equity": float(o.broker.account().equity),
         "return_pct": float(100 * (eq.iloc[-1] / cfg.initial_capital - 1)) if len(eq) else 0.0,
-        "max_drawdown_pct": float(100 * ((peak - eq) / peak).max()) if len(eq) else 0.0,
+        "max_drawdown_pct": float(100 * ((peak - curve) / peak).max()),
         "daily_sharpe": float(rets.mean() / rets.std() * np.sqrt(252)) if rets.std() > 0 else 0.0,
         "trading_days": len(eq),
         "positions_closed": len(closed),

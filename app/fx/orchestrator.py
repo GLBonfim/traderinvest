@@ -617,6 +617,11 @@ class Orchestrator:
         acct = self.broker.account()
         for ev in self.risk.observe(acct.equity, now):
             changed = True
+            if ev == "kill:max_drawdown":
+                self.journal(
+                    "kill_switch", {"engaged": True, "reason": self.risk.state.kill_reason}
+                )
+                continue
             if ev == "day_rolled":
                 self.journal(
                     "trading_day_started",
@@ -972,6 +977,13 @@ class Orchestrator:
             "exposure": self.broker.book.currency_exposure(conv_q),
             "risk": self.risk.status(),
             "agents": self.agent_status,
+            # statistical approval only (never widened by the demonstration mode)
+            "approved_agents": sorted(calibrated.APPROVED),
+            # agents the coordinator actually lets open (includes demo overrides)
+            "executing_agents": sorted(self.coordinator.approved),
+            "agents_validation": calibrated.PROVENANCE,
+            "unapproved_demo": self.config.simulation.allow_unapproved_agents
+            and self.environment is Environment.SIMULATION,
             "proposals": self.last_proposals,
             "decisions": self.last_decisions,
             "open_intents": open_intents,
