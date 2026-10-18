@@ -13,6 +13,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.fx.environment import Environment
+from app.fx.ibkr.settings import IbkrSettings
 from app.fx.models import PAIRS
 from app.fx.risk import RiskConfig
 
@@ -71,6 +72,7 @@ class FxConfig(BaseModel):
     language: str = "pt"
     risk: RiskSettings = Field(default_factory=RiskSettings)
     simulation: SimulationSettings = Field(default_factory=SimulationSettings)
+    ibkr: IbkrSettings = Field(default_factory=IbkrSettings)  # read-only paper connection
 
     @field_validator("account_currency")
     @classmethod

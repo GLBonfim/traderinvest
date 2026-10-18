@@ -69,6 +69,31 @@ Output: `dist/TraderInvestFX/TraderInvestFX.exe` (one-folder build) and
 `dist/TraderInvestFX-<version>-win64-portable.zip`. The build script smoke-tests the frozen
 engine (`--engine` prints `ENGINE_READY` and stops by itself without a client).
 
+## IBKR paper — phase A (read-only)
+
+`app/fx/ibkr` connects to the owner's **IBKR paper account** through IB Gateway/TWS running on
+this machine (TWS API via `ib_async`). Phase A is read-only: quotes, M15 bars, account values
+and forex positions. The adapter has no order method, connects with `readonly=True`, and
+refuses (and disconnects from) any session whose accounts are not paper (`DU…`). The engine
+still runs SIMULATION only; nothing here executes orders.
+
+Owner setup (credentials stay in the Gateway, never in TraderInvest):
+
+1. Start IB Gateway, set the Live/Paper switch to **Paper**, log in.
+2. Gateway → Configure → Settings → API → Settings: enable socket clients, tick
+   **Read-Only API**, socket port as shown (Gateway paper default 4002), trusted IP 127.0.0.1.
+3. Run the diagnosis:
+
+```powershell
+uv run python -m app.fx.ibkr.probe            # uses ibkr.port from config.json (default 4002)
+uv run python -m app.fx.ibkr.probe --port 7497 # TWS paper instead of IB Gateway
+```
+
+Exit codes: 0 ok, 2 no Gateway on that port, 3 refused (not a paper session), 4 connected but
+no data (check forex permissions / market data sharing with the paper account).
+
+Phase B (sending orders to the paper account only) needs the owner's explicit authorization.
+
 ## Arranque recusado (recuperação manual)
 
 The engine refuses to start, before processing anything, when its configuration or persisted

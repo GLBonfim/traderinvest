@@ -26,6 +26,13 @@ versioning: [SemVer](https://semver.org/).
   engine smoke test, portable zip, third-party notices, draft commercial licence.
 - 90 tests in `tests/unit/fx`; docs `docs/fx-platform.md`, `docs/commercial-readiness.md`.
 
+### Added (IBKR phase A, 2026-10-18)
+- `app/fx/ibkr`: read-only, paper-only IBKR connection through IB Gateway/TWS (`ib_async`
+  2.1.0, BSD): quotes (LIVE/DELAYED origin), MIDPOINT M15 bars, account values, forex
+  positions; no order method, `readonly=True`, non-paper sessions refused and disconnected,
+  loopback only. `python -m app.fx.ibkr.probe` diagnoses the connection. 11 tests with an
+  in-memory fake (no network). Note: `ib_async` requires `tzdata<2026` (2026.5 -> 2025.3).
+
 ### Fixed (technical review 2026-10-18)
 - E1: the daily-loss lock now takes precedence over the profit-target lock and is evaluated on
   every observation (lock upgrade + flatten policy); it is never downgraded.

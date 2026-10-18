@@ -1126,6 +1126,11 @@ acceptance difference not listed as intended reverts that step.
   decisions on M15 bars, venue leverage 30 (ESMA retail majors).
 - **Not done yet:** DEMO broker adapter and live data provider (require choosing a provider and
   the owner's own practice account; no account was created and no credential used).
+- *Revision 2026-10-18:* provider chosen for DEMO: Interactive Brokers (paper account, TWS API
+  through a local IB Gateway). Phase A (authorized) is read-only: `app/fx/ibkr` reads quotes,
+  bars, account values and positions, has no order method, connects read-only and refuses any
+  non-paper session (`DU…` prefix, to confirm on the first real connection). Phase B (orders
+  to the paper account) requires a separate authorization; REAL stays blocked.
 
 ## ADR-0037 — Native desktop application and engine process protocol
 
