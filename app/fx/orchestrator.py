@@ -40,13 +40,14 @@ from app.fx.agents import (
     PortfolioCoordinator,
     RegimeAgent,
     TrendAgent,
+    calibrated,
 )
 from app.fx.agents.base import Agent, MarketView
 from app.fx.agents.coordinator import PairDecision
 from app.fx.calendar import FxCalendar
 from app.fx.config import FxConfig
 from app.fx.environment import LABELS as ENV_LABELS
-from app.fx.environment import require_executable, validate_environment
+from app.fx.environment import Environment, require_executable, validate_environment
 from app.fx.errors import (
     AccountMismatchError,
     EnvironmentMismatchError,
@@ -65,6 +66,7 @@ from app.fx.store import FxStore
 
 ENGINE_VERSION = "0.1.0"
 SAVE_EVERY_TICKS = 30
+TIMEFRAME_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "H1": 60}
 SAFETY_RESUME_WORD = "RETOMAR"  # typed confirmation to leave a safety pause
 STATE_VERSIONS = (1, 2)  # orchestrator state document: 2 adds journal_head and pause
 EPS_UNITS = 1e-9
@@ -215,6 +217,9 @@ class Orchestrator:
         *,
         broker_factory: Callable[[SimBrokerConfig], SimBroker] = SimBroker,
         reconcile: ReconcilePolicy | None = None,
+        market_factory: Callable[[FxConfig, datetime, FxCalendar], SyntheticMarket] | None = None,
+        agents: list[Agent] | None = None,
+        regime_agent: Agent | None = None,
     ) -> None:
         self.config = config
         self.store = store
@@ -228,11 +233,10 @@ class Orchestrator:
         self.pause_detail = ""
         self.paused_at: str | None = None
         self.startup_pending: set[str] = set()  # intents still UNKNOWN after the restart
-        self.agents: list[Agent] = [TrendAgent(), MomentumAgent(), MeanReversionAgent()]
-        self.regime_agent = RegimeAgent()
-        self.coordinator = PortfolioCoordinator(
-            config.risk.min_score, config.max_new_entries_per_cycle
-        )
+        self.market_factory = market_factory
+        self.agents: list[Agent] = agents or [TrendAgent(), MomentumAgent(), MeanReversionAgent()]
+        self.regime_agent: Agent = regime_agent or RegimeAgent()
+        self.coordinator = self._coordinator(config)
         self.intents: dict[str, Intent] = {}
         self.owners: dict[str, str] = {}  # pair -> agent role that opened the position
         self.last_proposals: dict[str, dict[str, dict[str, Any]]] = {}  # pair -> role -> p
@@ -245,6 +249,23 @@ class Orchestrator:
         self._restore_or_create(now or datetime.now(UTC))
 
     # --- construction / recovery ----------------------------------------------------------
+
+    def _coordinator(self, cfg: FxConfig) -> PortfolioCoordinator:
+        """Only validated agents open positions; the synthetic SIMULATION may opt out (demo)."""
+        approved = calibrated.APPROVED
+        if cfg.environment is Environment.SIMULATION and cfg.simulation.allow_unapproved_agents:
+            approved = frozenset(a.role.value for a in self.agents)
+        return PortfolioCoordinator(cfg.risk.min_score, cfg.max_new_entries_per_cycle, approved)
+
+    def _position_age_bars(self, opened_at: datetime, now: datetime) -> int:
+        minutes = TIMEFRAME_MINUTES.get(self.config.timeframe, 15)
+        return max(0, int((now - opened_at).total_seconds() // (minutes * 60)))
+
+    def _before_weekend(self, now: datetime) -> bool:
+        """Within 15 minutes of a Friday 17:00 New York close (positions go flat)."""
+        day = self.calendar.trading_day(now)
+        close = self.calendar.next_close(now)
+        return day.weekday() == 4 and close - now <= timedelta(minutes=15)
 
     def _broker_config(self) -> SimBrokerConfig:
         c = self.config
@@ -368,8 +389,11 @@ class Orchestrator:
     def _create(self, now: datetime) -> None:
         sim = self.config.simulation
         start = now - timedelta(minutes=sim.warm_up_minutes)
-        self.market = SyntheticMarket(self.config.pairs, start, sim.seed, self.calendar)
-        self.market.warm_up(sim.warm_up_minutes)
+        if self.market_factory is not None:  # e.g. a historical replay (research)
+            self.market = self.market_factory(self.config, now, self.calendar)
+        else:
+            self.market = SyntheticMarket(self.config.pairs, start, sim.seed, self.calendar)
+            self.market.warm_up(sim.warm_up_minutes)
         self.broker.on_quotes(self.market.quotes)
         self.risk = RiskManager(
             self.config.risk.to_risk_config(), None, self.calendar, self.environment
@@ -606,6 +630,9 @@ class Orchestrator:
         if self.risk.should_flatten() and self.broker.positions():
             self.flatten_all("bloqueio diário: fecho de posições")
             changed = True
+        if self._before_weekend(now) and self.broker.positions():
+            self.flatten_all("fecho antes do fim de semana")  # the validated behaviour
+            changed = True
         if now.minute % 15 == 0:
             self.equity_curve.append([now.isoformat(), round(acct.equity, 2)])
         decision_pairs = [p for p, tf, _ in closed if tf == self.config.timeframe]
@@ -627,7 +654,8 @@ class Orchestrator:
             if q is None or not bars:
                 continue
             units = positions[sym].units if sym in positions else 0.0
-            view = MarketView(sym, self.config.timeframe, bars, now, units, q.spread)
+            age = self._position_age_bars(positions[sym].opened_at, now) if sym in positions else 0
+            view = MarketView(sym, self.config.timeframe, bars, now, units, q.spread, age)
             regime = self.regime_agent.analyze(view)
             props = [a.analyze(view) for a in self.agents]
             self.last_proposals[sym] = {p.agent.value: p.to_dict() for p in [regime, *props]}
@@ -885,7 +913,7 @@ class Orchestrator:
             raise AccountMismatchError("a moeda da conta só muda com uma reposição explícita")
         self.config = cfg
         self.risk.config = cfg.risk.to_risk_config()
-        self.coordinator = PortfolioCoordinator(cfg.risk.min_score, cfg.max_new_entries_per_cycle)
+        self.coordinator = self._coordinator(cfg)
         self.journal("config_changed", {"config": cfg.model_dump(mode="json")})
         self.save()
 

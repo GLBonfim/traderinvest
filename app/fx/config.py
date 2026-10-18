@@ -59,6 +59,9 @@ class SimulationSettings(BaseModel):
     warm_up_minutes: int = Field(60 * 24 * 4, ge=0, le=60 * 24 * 30)
     commission_per_million: float = Field(30.0, ge=0, le=500)
     slippage_pips: float = Field(0.1, ge=0, le=10)
+    # SIMULATION only (synthetic prices): let agents that did NOT pass the out-of-sample
+    # validation open positions, to demonstrate the interface. Never applies to DEMO.
+    allow_unapproved_agents: bool = False
 
 
 class FxConfig(BaseModel):
@@ -67,7 +70,7 @@ class FxConfig(BaseModel):
     initial_capital: float = Field(10_000.0, gt=0, le=1e9)
     pairs: list[str] = Field(default_factory=lambda: list(PAIRS))
     timeframe: str = "M15"
-    history_bars: int = Field(250, ge=80, le=600)
+    history_bars: int = Field(600, ge=280, le=600)  # EMA(200) needs a long window
     max_new_entries_per_cycle: int = Field(1, ge=1, le=10)
     language: str = "pt"
     risk: RiskSettings = Field(default_factory=RiskSettings)

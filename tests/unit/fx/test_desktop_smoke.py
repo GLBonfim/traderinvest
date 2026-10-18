@@ -88,7 +88,7 @@ def test_main_window_panels_render_without_engine(app: QApplication, snapshot: d
         w._on_snapshot(snapshot)
     w._on_event(
         {
-            "seq": 1,
+            "seq": 10**9,  # a new event (not one already shown from the snapshot)
             "ts": snapshot["now"],
             "kind": "order_sent",
             "payload": {"pair": "EURUSD", "side": "buy", "units": 1000},

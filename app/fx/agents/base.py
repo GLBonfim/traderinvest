@@ -28,6 +28,7 @@ class MarketView:
     now: datetime
     position_units: float  # signed current position (0 = flat)
     spread: float  # current spread in price units
+    position_age_bars: int = 0  # bars since the current position opened (time stops)
 
     @cached_property
     def df(self) -> pd.DataFrame:
@@ -115,3 +116,62 @@ def make(
 
 def hold(agent: Agent, view: MarketView, rationale: str, evidence: dict[str, Any]) -> AgentProposal:
     return make(agent, view, ProposalAction.HOLD, Direction.FLAT, 0.0, rationale, evidence)
+
+
+def signal_row(view: MarketView, fn: Any, params: Any) -> tuple[pd.Series, pd.Series]:
+    """(signal row, feature row) of the LAST closed bar, computed with the shared vectorised
+    signal code (app.fx.agents.signals) so production equals the validated research."""
+    from app.fx.agents.signals import features
+
+    spread = pd.Series(view.spread, index=view.df.index, dtype=float)
+    f = features(view.df, spread)
+    return fn(f, params).iloc[-1], f.iloc[-1]
+
+
+def from_signal(
+    agent: Agent,
+    view: MarketView,
+    sig: pd.Series,
+    feat: pd.Series,
+    rationale_long: str,
+    rationale_short: str,
+    max_hold: int,
+) -> AgentProposal:
+    """OPEN from a signal row, CLOSE on the time stop, HOLD otherwise."""
+    ev: dict[str, Any] = {
+        "atr": float(feat["atr"]),
+        "er": float(feat["er"]),
+        "rsi": float(feat["rsi"]),
+        "tradable": bool(feat["tradable"]),
+    }
+    if view.position_units != 0:
+        if view.position_age_bars >= max_hold:
+            return make(
+                agent,
+                view,
+                ProposalAction.CLOSE,
+                Direction.FLAT,
+                0.6,
+                f"tempo máximo da operação atingido ({max_hold} velas)",
+                ev,
+            )
+        return hold(agent, view, "posição em curso", ev)
+    d = int(sig["dir"])
+    if d == 0:
+        return hold(agent, view, "sem configuração válida", ev)
+    c = float(view.bars[-1].close)
+    stop_dist, target_dist = float(sig["stop_dist"]), float(sig["target_dist"])
+    direction = Direction.LONG if d > 0 else Direction.SHORT
+    ev |= {"stop_dist": stop_dist, "target_dist": target_dist, "max_hold": max_hold}
+    return make(
+        agent,
+        view,
+        ProposalAction.OPEN,
+        direction,
+        float(sig["score"]),
+        rationale_long if d > 0 else rationale_short,
+        ev,
+        c,
+        c - d * stop_dist,
+        c + d * target_dist,
+    )
