@@ -83,7 +83,7 @@ Nothing is deleted, repaired or overwritten.
 | `state_unreadable` | `fx.db` is not a readable database |
 | `state_corrupt` | a state document is malformed or incomplete, or state is missing while the journal has history |
 | `journal_integrity` | the journal hash chain is broken, or shorter than the saved state expects |
-| `account_mismatch` | the configured account currency differs from the persisted account |
+| `account_mismatch` | the configured account currency or pairs differ from the persisted account |
 
 Procedure:
 
@@ -95,7 +95,7 @@ Procedure:
    to deliberately start a new simulated account, rename (do not delete) `fx.db` to keep it
    for diagnosis; the engine then creates a new account on the next start.
 4. A persisted safety pause (`pause_reason = safety`) is not an error: inspect
-   `logs/engine.log`, then resume explicitly with the Pause/Resume button.
+   `logs/engine.log`, then resume explicitly with the Pause/Resume button (type `RETOMAR`).
 
 ## Tests
 

@@ -65,6 +65,7 @@ from app.fx.store import FxStore
 
 ENGINE_VERSION = "0.1.0"
 SAVE_EVERY_TICKS = 30
+SAFETY_RESUME_WORD = "RETOMAR"  # typed confirmation to leave a safety pause
 STATE_VERSIONS = (1, 2)  # orchestrator state document: 2 adds journal_head and pause
 EPS_UNITS = 1e-9
 VENUE_LEVERAGE = 30.0  # simulated venue margin (ESMA retail, majors); risk caps exposure below
@@ -316,6 +317,12 @@ class Orchestrator:
                 f"{self.config.account_currency}; repor a moeda na configuração ou reiniciar a "
                 "conta de forma explícita"
             )
+        if sorted(self.market.pairs) != sorted(self.config.pairs):
+            raise AccountMismatchError(
+                "os pares configurados não coincidem com os da conta guardada "
+                f"({len(self.config.pairs)} configurados, {len(self.market.pairs)} guardados); "
+                "repor os pares na configuração ou reiniciar a conta de forma explícita"
+            )
         risk_state = self._parse("risk", lambda: RiskState.from_dict(docs["risk"]))
 
         def orchestrator_doc() -> None:
@@ -555,10 +562,15 @@ class Orchestrator:
         self.journal("engine_paused", {"reason": reason, "detail": detail})
         self.save()
 
-    def resume(self) -> None:
-        """Only an explicit operator command resumes; locks and the kill switch are untouched."""
+    def resume(self, confirmation: str | None = None) -> None:
+        """Only an explicit operator command resumes; locks and the kill switch are untouched.
+        Leaving a `safety` pause (internal error) also needs the typed word RETOMAR."""
         if not self.paused:
             return
+        if self.pause_reason == "safety" and confirmation != SAFETY_RESUME_WORD:
+            raise ValueError(
+                f"retomar após uma pausa de segurança exige a palavra {SAFETY_RESUME_WORD}"
+            )
         previous = self.pause_reason
         self.paused, self.pause_reason, self.pause_detail, self.paused_at = False, None, "", None
         self.journal("engine_resumed", {"previous_reason": previous})

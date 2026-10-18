@@ -30,6 +30,7 @@ TOKEN_ENV = "TRADERINVEST_ENGINE_TOKEN"  # noqa: S105 - a variable name, not a s
 CONFIRM_FLATTEN = "FECHAR"
 CONFIRM_RESET = "REINICIAR"
 CONFIRM_KILL_RELEASE = "LIBERTAR"
+CONFIRM_SAFETY_RESUME = "RETOMAR"  # leaving a safety pause (must match the orchestrator)
 
 COMMANDS = frozenset(
     {

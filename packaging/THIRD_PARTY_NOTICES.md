@@ -15,6 +15,14 @@ licence; nothing in the TraderInvest FX licence restricts your rights under thes
 | annotated-types, typing-inspection | MIT | https://github.com/pydantic |
 | typing_extensions | PSF License 2.0 | https://github.com/python/typing_extensions |
 | tzdata (IANA time zone database) | Apache 2.0 (data: public domain) | https://github.com/python/tzdata |
+| SQLAlchemy | MIT | https://www.sqlalchemy.org |
+| python-dotenv (via pydantic-settings) | BSD 3-Clause | https://github.com/theskumar/python-dotenv |
+| six (via python-dateutil) | MIT | https://github.com/benjaminp/six |
+| OpenSSL 3 (libssl, libcrypto) | Apache 2.0 | https://www.openssl.org |
+| SQLite | Public domain | https://sqlite.org |
+| libffi | MIT | https://sourceware.org/libffi |
+| bzip2, xz/liblzma, expat (Python extension modules) | BSD-style / public domain / MIT | https://www.python.org |
+| Microsoft Visual C++ runtime (VCRUNTIME140*.dll) | Microsoft Visual C++ Redistributable licence | https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files |
 | PyInstaller bootloader | GPL v2 with bootloader exception | https://pyinstaller.org |
 
 ## LGPL v3 (Qt and PySide6)

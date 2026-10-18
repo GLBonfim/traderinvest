@@ -11,6 +11,10 @@ EXCLUDES = [
     "streamlit", "plotly", "sklearn", "scipy", "fastapi", "uvicorn", "starlette",
     "alembic", "psycopg", "yfinance", "exchange_calendars", "matplotlib", "IPython", "pytest",
     "tkinter", "pyarrow", "altair", "pydeck", "tornado", "watchdog", "httpx",
+    # dev/optional modules pulled in by hooks but never used at runtime
+    "mypy", "setuptools", "pkg_resources", "lxml", "yaml", "markupsafe", "jinja2",
+    "charset_normalizer", "PIL", "pytz", "openpyxl", "xlrd", "tables", "numexpr",
+    "bottleneck", "fsspec", "s3fs",
     # Qt modules the app does not use
     "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtPdf", "PySide6.QtSvg", "PySide6.QtSql",
     "PySide6.QtTest", "PySide6.QtXml", "PySide6.QtDBus", "PySide6.QtOpenGL",

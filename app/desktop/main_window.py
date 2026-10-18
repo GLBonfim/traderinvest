@@ -40,7 +40,12 @@ from app.desktop.panels import (
 )
 from app.desktop.strings import t
 from app.desktop.theme import P, mono_font
-from app.engine.protocol import CONFIRM_FLATTEN, CONFIRM_KILL_RELEASE, CONFIRM_RESET
+from app.engine.protocol import (
+    CONFIRM_FLATTEN,
+    CONFIRM_KILL_RELEASE,
+    CONFIRM_RESET,
+    CONFIRM_SAFETY_RESUME,
+)
 from app.fx.config import data_dir
 
 SPEEDS = [("1x  (1 min/s)", 1.0), ("2x", 2.0), ("5x", 5.0), ("10x", 10.0), ("20x", 20.0)]
@@ -365,7 +370,20 @@ class MainWindow(QMainWindow):
         self.room.chart_pair = sym
 
     def _toggle_pause(self) -> None:
-        self.client.send("resume" if self.snap.get("paused") else "pause")
+        if not self.snap.get("paused"):
+            self.client.send("pause")
+        elif self.snap.get("pause_reason") == "safety":
+            if confirm_word(
+                self,
+                "Retomar após pausa de segurança",
+                "O motor parou por um erro interno"
+                f" ({self.snap.get('pause_detail') or 'ver registo'}). Verifique o registo do "
+                "motor antes de retomar.",
+                CONFIRM_SAFETY_RESUME,
+            ):
+                self.client.send("resume", confirmation=CONFIRM_SAFETY_RESUME)
+        else:
+            self.client.send("resume")
 
     def _kill(self) -> None:
         box = QMessageBox(self)

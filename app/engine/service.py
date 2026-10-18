@@ -293,7 +293,8 @@ class EngineService:
             o.pause("manual")
             return {}
         if name == "resume":
-            o.resume()
+            confirmation = args.get("confirmation")
+            o.resume(str(confirmation) if confirmation is not None else None)
             return {}
         if name == "set_speed":
             cfg = merge(o.config, {"simulation": {"steps_per_second": float(args["value"])}})

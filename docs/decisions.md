@@ -1158,7 +1158,8 @@ acceptance difference not listed as intended reverts that step.
      the configured account currency differs from the persisted account's; nothing is
      repaired or recreated. The desktop's environment badge shows only the engine's validated
      environment. An internal error pauses the engine with a persisted `safety` reason; only
-     the explicit `resume` command resumes. **Orphan policy:** the engine stops by itself if no
+     the explicit `resume` command with the typed word `RETOMAR` resumes it. The configured
+     pairs must also match the persisted account's. **Orphan policy:** the engine stops by itself if no
      client is connected for 20 s, so a crashed UI never leaves a hidden engine trading. A
      background/tray mode is a possible later option (it needs its own ADR).
   6. **Visual identity:** dark cyber operations room, neon green/magenta/cyan, amber warnings, red

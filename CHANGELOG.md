@@ -26,6 +26,25 @@ versioning: [SemVer](https://semver.org/).
   engine smoke test, portable zip, third-party notices, draft commercial licence.
 - 90 tests in `tests/unit/fx`; docs `docs/fx-platform.md`, `docs/commercial-readiness.md`.
 
+### Fixed (technical review 2026-10-18)
+- E1: the daily-loss lock now takes precedence over the profit-target lock and is evaluated on
+  every observation (lock upgrade + flatten policy); it is never downgraded.
+- E2: one source of truth for the environment (`validate_environment`: configuration vs
+  adapter vs enabled = SIMULATION) checked before any processing; the UI badge shows only the
+  engine's validated environment.
+- E3: orders with an unknown outcome stay UNKNOWN unless the adapter guarantees authoritative
+  lookups; bounded retries on the engine clock, entries blocked on the pair (all pairs after a
+  restart), kill switch + `order_unresolved` alert on exhaustion; never resent.
+- M1: every order state change goes through `lifecycle.transition`.
+- M2/M3/M4: classified start-up refusals (exit code 4, no automatic restart): invalid config,
+  unreadable/corrupt/incomplete state, broken or truncated journal, account currency or pairs
+  different from the persisted account; nothing is repaired or recreated automatically.
+- M5: the safety pause is persisted; leaving it needs the typed word `RETOMAR`.
+- M6: partial fills use cumulative venue quantities; a remainder-cancelled order ends
+  CANCELLED with fills; the entry is counted once.
+- Packaging: unused modules (mypy, setuptools, lxml, yaml, ...) excluded from the bundle
+  (171 -> 159 MB); third-party notices aligned with the bundle.
+
 ## [Unreleased] — earlier work
 
 Branch `feature/alpaca-paper-validation`. No external sandbox order has been placed.

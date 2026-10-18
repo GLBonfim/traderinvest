@@ -567,6 +567,15 @@ def test_m4_missing_config_does_not_recurrency_a_persisted_account(tmp_path: Pat
         Orchestrator(cfg, FxStore(tmp_path / "fx.db"), NOW)
 
 
+def test_m4_pairs_must_match_the_persisted_account(tmp_path: Path) -> None:
+    db = created(tmp_path)
+    before = db_rows(db)
+    fewer = small_config().model_copy(update={"pairs": ["EURUSD", "GBPUSD"]})
+    with pytest.raises(AccountMismatchError, match="pares"):
+        Orchestrator(fewer, FxStore(db), NOW)
+    assert db_rows(db) == before
+
+
 def test_m4_currency_cannot_change_at_runtime(tmp_path: Path) -> None:
     o = orchestrator(tmp_path)
     with pytest.raises(AccountMismatchError):
@@ -585,7 +594,10 @@ def test_m5_safety_pause_survives_restart_and_needs_an_explicit_resume(tmp_path:
     before = r.market.now
     r.tick()
     assert r.market.now == before  # no processing while paused
-    r.resume()
+    with pytest.raises(ValueError, match="RETOMAR"):
+        r.resume()  # a safety pause needs the typed confirmation
+    assert r.paused
+    r.resume("RETOMAR")
     assert not r.paused and "engine_resumed" in kinds(r)
     r.store.close()
     assert not Orchestrator(small_config(), FxStore(tmp_path / "fx.db"), NOW).paused
@@ -619,7 +631,10 @@ def test_m5_engine_tick_error_persists_a_safety_pause(tmp_path: Path) -> None:
     again = EngineService(tmp_path, "t" * 40)
     again._open()
     assert again.orch.paused and again.orch.pause_reason == "safety"
-    again._run_command("resume", {})  # the explicit, existing command
+    with pytest.raises(ValueError):
+        again._run_command("resume", {})  # no confirmation word
+    assert again.orch.paused
+    again._run_command("resume", {"confirmation": "RETOMAR"})
     assert not again.orch.paused
     again._close()
 
