@@ -45,7 +45,9 @@ FEATURE_NAMES = (
 )
 MODEL_SCHEMA = "fx-portable-paper/2"
 RUN_SCHEMA = "fx-training-run/1"
-BAR_HOURS = {"H1": 1, "H4": 4}
+BAR_HOURS = {"H1": 1, "H4": 4}  # legacy H1/H4 trainer, pilot and resampling: do not extend
+# every timeframe a portable model may declare; M5 is research-only until validated
+TIMEFRAME_MINUTES = {"M5": 5, "H1": 60, "H4": 240}
 RETIREMENT_POLICY: dict[str, Any] = {
     "minimum_closed_trades": 20,
     "rolling_trades": 50,
@@ -77,7 +79,7 @@ class LinearModel:
             "forest",
         ):
             raise ValueError("unsupported model schema/algorithm")
-        if self.timeframe not in BAR_HOURS or not self.model_id:
+        if self.timeframe not in TIMEFRAME_MINUTES or not self.model_id:
             raise ValueError("invalid model identity/timeframe")
         if (
             not self.feature_names
@@ -257,7 +259,7 @@ def retirement_decision(
 
 def feature_frame(mid: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     """Closed-bar features. Sessions use the bar CLOSE time, not its opening label."""
-    hours = BAR_HOURS[timeframe]
+    minutes = TIMEFRAME_MINUTES[timeframe]
     c = mid["close"]
     true_range = pd.concat(
         [mid["high"] - mid["low"], (mid["high"] - c.shift()).abs(), (mid["low"] - c.shift()).abs()],
@@ -280,7 +282,7 @@ def feature_frame(mid: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     out["rsi_centered"] = (rsi - 50) / 50
     out["efficiency"] = efficiency
     out["volatility_rank"] = atr.rolling(200, min_periods=100).rank(pct=True)
-    close_times = pd.DatetimeIndex(mid.index) + pd.Timedelta(hours=hours)
+    close_times = pd.DatetimeIndex(mid.index) + pd.Timedelta(minutes=minutes)
     angle = 2 * np.pi * (close_times.hour + close_times.minute / 60) / 24
     out["hour_sin"], out["hour_cos"] = np.sin(angle), np.cos(angle)
     # FX has no centralized traded volume: zero is an unavailable placeholder only.
@@ -301,7 +303,11 @@ def feature_frame(mid: pd.DataFrame, timeframe: str) -> pd.DataFrame:
 
 
 def model_signals(mid: pd.DataFrame, model: LinearModel) -> pd.DataFrame:
-    f = feature_frame(mid, model.timeframe)
+    return signals_from_features(feature_frame(mid, model.timeframe), model)
+
+
+def signals_from_features(f: pd.DataFrame, model: LinearModel) -> pd.DataFrame:
+    """`model_signals` on an already computed `feature_frame` (same timeframe as the model)."""
     x = f[list(model.feature_names)].to_numpy(float)
     valid = np.isfinite(x).all(axis=1) & np.isfinite(f["atr"].to_numpy(float))
     z = (x - np.asarray(model.center)) / np.asarray(model.scale)
@@ -328,7 +334,7 @@ def model_signals(mid: pd.DataFrame, model: LinearModel) -> pd.DataFrame:
             "score": np.where(direction != 0, 0.55 + 0.4 * strength, 0.0),
             "max_hold": model.max_hold,
         },
-        index=mid.index,
+        index=f.index,
     )
 
 
