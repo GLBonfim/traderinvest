@@ -14,8 +14,10 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
+from app.fx.calendar import FxCalendar
 from app.fx.config import load_config
 from app.fx.ibkr.adapter import IbkrClient, IbkrReadOnlyAdapter
 from app.fx.ibkr.paper import NotPaperAccountError
@@ -42,6 +44,7 @@ async def run(
     bars_pair: str,
     client_factory: Callable[[], IbkrClient] = default_client,
     out: Any = sys.stdout,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> int:
     def say(*a: object) -> None:
         print(*a, file=out)
@@ -69,8 +72,25 @@ async def run(
         say(f"Posições Forex: {len(pos)}")
         for p in pos:
             say(f"  {p.pair} {p.units:+,.0f} @ {price(p.pair, p.avg_price)}")
+        cal = FxCalendar()
+        now = clock()
+        market_open = cal.is_open(now)
+        if market_open:
+            say("Mercado Forex: aberto")
+        else:
+            reopen = cal.next_open(now)
+            say(
+                f"Mercado Forex: FECHADO até {reopen:%Y-%m-%d %H:%M}Z "
+                f"(17:00 Nova Iorque); não há bid/ask em tempo real"
+            )
         rep = await adapter.quotes(pairs)
-        say(f"Cotações ({len(rep.quotes)}/{len(pairs)}):")
+        label = "tempo real"
+        if not rep.quotes and not market_open:
+            adapter.set_market_data_type(2)  # frozen: the last quotes before the close
+            rep = await adapter.quotes(pairs)
+            adapter.set_market_data_type(settings.market_data_type)
+            label = "congeladas (último preço antes do fecho)"
+        say(f"Cotações {label} ({len(rep.quotes)}/{len(pairs)}):")
         for sym, q in rep.quotes.items():
             say(
                 f"  {sym} bid {price(sym, q.bid)} ask {price(sym, q.ask)} spread "
@@ -78,7 +98,12 @@ async def run(
                 f"{q.ts:%Y-%m-%d %H:%M:%S}Z"
             )
         if rep.missing:
-            say(f"  sem bid/ask: {', '.join(rep.missing)} (permissões ou dados de mercado?)")
+            hint = (
+                "permissão Forex ou partilha de dados de mercado com a conta paper?"
+                if market_open or rep.quotes
+                else "normal com o mercado fechado; repita depois da reabertura"
+            )
+            say(f"  sem bid/ask: {', '.join(rep.missing)} ({hint})")
         bars = await adapter.bars(bars_pair, "M15", 8)
         say(f"Últimas velas M15 de {bars_pair} (MIDPOINT): {len(bars)}")
         for b in bars[-4:]:

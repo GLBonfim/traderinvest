@@ -153,6 +153,12 @@ class IbkrReadOnlyAdapter:
         self.client.reqMarketDataType(s.market_data_type)
         return self.accounts
 
+    def set_market_data_type(self, market_data_type: int) -> None:
+        """1 live, 2 frozen (last quote while the market is closed), 3 delayed, 4 both."""
+        if market_data_type not in (1, 2, 3, 4):
+            raise ValueError("market data type must be 1, 2, 3 or 4")
+        self.client.reqMarketDataType(market_data_type)
+
     def disconnect(self) -> None:
         if self.client.isConnected():
             self.client.disconnect()

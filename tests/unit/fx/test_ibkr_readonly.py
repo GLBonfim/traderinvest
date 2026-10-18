@@ -51,6 +51,8 @@ class FakeIB:
         self.disconnects = 0
         self.mdt: int | None = None
         self.hist_args: tuple[Any, ...] = ()
+        self.closed_until_frozen = False
+        self.mdt_history: list[int] = []
 
     async def connectAsync(
         self,
@@ -82,11 +84,17 @@ class FakeIB:
 
     def reqMarketDataType(self, marketDataType: int) -> None:
         self.mdt = marketDataType
+        self.mdt_history.append(marketDataType)
 
     async def qualifyContractsAsync(self, *contracts: Any) -> list[Any]:
         return list(contracts)
 
     async def reqTickersAsync(self, *contracts: Any) -> list[Any]:
+        if self.closed_until_frozen and self.mdt != 2:
+            return [
+                SimpleNamespace(contract=c, bid=NAN, ask=NAN, time=None, marketDataType=1)
+                for c in contracts
+            ]
         out = []
         for c in contracts:
             sym = f"{c.symbol}{c.currency}"
@@ -259,7 +267,7 @@ def test_account_and_positions() -> None:
 # --- probe -----------------------------------------------------------------------------------
 
 
-def probe(fake: FakeIB) -> tuple[int, str]:
+def probe(fake: FakeIB, now: datetime = NOW) -> tuple[int, str]:
     out = io.StringIO()
     code = go(
         run(
@@ -268,9 +276,27 @@ def probe(fake: FakeIB) -> tuple[int, str]:
             "EURUSD",
             client_factory=lambda: fake,
             out=out,
+            clock=lambda: now,
         )
     )
     return code, out.getvalue()
+
+
+def test_probe_with_the_market_closed_uses_frozen_quotes_then_restores_live() -> None:
+    sunday = datetime(2026, 10, 18, 1, 45, tzinfo=UTC)  # FX closed until 21:00 UTC
+    fake = FakeIB(tickers={"EURUSD": (1.12370, 1.12390, 2)})
+    fake.closed_until_frozen = True
+    code, text = probe(fake, sunday)
+    assert code == OK
+    assert "FECHADO até 2026-10-18 21:00Z" in text
+    assert "congeladas" in text and "EURUSD bid 1.12370 ask 1.12390" in text
+    assert fake.mdt_history == [1, 2, 1]  # live, frozen for the retry, live again
+
+
+def test_probe_open_market_missing_quotes_points_to_permissions() -> None:
+    fake = FakeIB(tickers={"EURUSD": (NAN, NAN, 1)})
+    _code, text = probe(fake)
+    assert "Mercado Forex: aberto" in text and "permissão Forex" in text
 
 
 def test_probe_reads_everything_and_disconnects() -> None:
