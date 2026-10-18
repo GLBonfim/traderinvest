@@ -1,0 +1,51 @@
+TraderInvest FX - PILOTO EXPERIMENTAL (conta PAPER do IBKR)
+===========================================================
+
+O que é
+- Um processo SEPARADO da aplicação (a janela do TraderInvest FX continua em SIMULAÇÃO).
+- Observa, em tempo real e na conta de prática (paper) do IBKR, candidatos treinados em
+  histórico. NÃO são estratégias aprovadas, NÃO usa dinheiro real e NÃO promete lucro.
+- Se o registo de treino incluído não tiver nenhum candidato elegível, o piloto diz
+  "NENHUM candidato elegível" e bloqueia todas as entradas (NO TRADE). Nenhum modelo
+  perdedor é promovido para preencher vagas.
+
+Antes de começar
+1. Inicie o IB Gateway, escolha "Paper Trading" e entre com a sua conta paper (as
+   credenciais ficam só no Gateway; o TraderInvest nunca as pede).
+2. Gateway -> Configure -> Settings -> API -> Settings: ative socket clients, porta 4002,
+   IP de confiança 127.0.0.1.
+
+Passo 1 - verificar (sem ligação, sem ordens)
+   Duplo clique em Piloto-Paper-Verificar.cmd
+
+Passo 2 - dry-run (liga-se em só leitura, NUNCA envia ordens)
+   Duplo clique em Piloto-Paper-DryRun.cmd
+   Mostra a conta paper (mascarada, DU...), os candidatos e o que FARIA. Com o mercado
+   fechado (fim de semana) diz "mercado fechado". Feche com Ctrl+C.
+
+Passo 3 - armar (ordens reais na conta PAPER; opcional, decisão sua)
+   - No Gateway, desmarque MANUALMENTE "Read-Only API" (o programa nunca altera esta opção).
+   - Numa janela de comandos nesta pasta:
+       TraderInvestFX.exe --paper-pilot --arm --confirm ARMAR-PAPER
+   - É preciso armar de novo em cada arranque.
+
+Para desarmar: Ctrl+C, ou crie o ficheiro STOP na pasta do piloto
+(%LOCALAPPDATA%\TraderInvestFX\pilot\STOP). Volte a marcar "Read-Only API" no Gateway.
+
+Proteções
+- Só contas paper (DU...); as portas 4001/7496 (sessões reais) são recusadas.
+- Só cotações LIVE com hora real recente; apenas velas fechadas.
+- Capital virtual de 10 000 EUR, isolado do saldo paper.
+- Regras de risco centrais: 5 entradas/dia, limites diários, travão de drawdown.
+- Cada entrada leva stop e alvo no IBKR. Se a proteção não for confirmada, há alarme e
+  paragem. Nunca reenvia ordens às cegas.
+- Retira automaticamente candidatos que se degradam (5 R de queda, ou 20 operações com
+  média negativa e PF < 1).
+- Diário e estado em %LOCALAPPDATA%\TraderInvestFX\pilot (pilot.sqlite, pilot.log,
+  status.json).
+
+Resultados do piloto são estimativas (comissões convertidas à cotação mais recente) e não
+provam vantagem estatística. Detalhes nesta pasta:
+  _internal\docs\fx-platform.md, _internal\docs\fx-pattern-research.md,
+  _internal\docs\candlestick-engine.md e o relatório do treino em
+  _internal\pilot\report.md (fontes: _internal\pilot\source-evidence.json).

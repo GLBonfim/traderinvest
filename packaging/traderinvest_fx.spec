@@ -3,8 +3,16 @@
 import os
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_submodules
+
 ROOT = Path(SPECPATH).parent
 BUILD = ROOT / "build" / "packaging"
+# training run whose selection the experimental paper pilot ships (set by build.py)
+PILOT_RUN = Path(os.environ.get("TRADERINVEST_PILOT_RUN", ROOT / "data/fx/training/run-20261018"))
+PILOT_FILES = [(str(PILOT_RUN / name), "pilot") for name in ("selected.json", "report.md",
+               "protocol.json", "source-evidence.json") if (PILOT_RUN / name).is_file()]
+if not (PILOT_RUN / "selected.json").is_file():
+    raise SystemExit(f"pilot selection missing: {PILOT_RUN / 'selected.json'}")
 
 EXCLUDES = [
     # research / web stack not used by the desktop product (sqlalchemy stays: app.core.config)
@@ -31,9 +39,16 @@ a = Analysis(
            (str(ROOT / "packaging" / "RISK-NOTICE-PT.txt"), "."),
            (str(ROOT / "docs" / "install.md"), "docs"),
            (str(ROOT / "docs" / "fx-platform.md"), "docs"),
-           (str(ROOT / "docs" / "fx-agent-validation.md"), "docs")],
+           (str(ROOT / "docs" / "fx-agent-validation.md"), "docs"),
+           (str(ROOT / "docs" / "fx-pattern-research.md"), "docs"),
+           (str(ROOT / "docs" / "candlestick-engine.md"), "docs"),
+           (str(ROOT / "packaging" / "pilot" / "PILOTO-PAPER-LEIA-ME.txt"), "."),
+           *PILOT_FILES],
     hiddenimports=["app.engine.__main__", "app.engine.service", "app.engine.protocol",
-                   "zoneinfo", "tzdata"],
+                   "zoneinfo", "tzdata",
+                   # experimental paper pilot (inference is numpy/pandas + JSON numbers)
+                   "app.fx.ibkr.pilot", "app.fx.ibkr.execution", "app.fx.agents.trained",
+                   "aeventkit", "nest_asyncio", *collect_submodules("ib_async")],
     excludes=EXCLUDES,
     noarchive=False,
 )

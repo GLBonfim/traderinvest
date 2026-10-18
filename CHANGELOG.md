@@ -6,6 +6,17 @@ versioning: [SemVer](https://semver.org/).
 ## [Unreleased] — branch `feature/fx-desktop-platform`
 
 ### Added
+- IBKR paper phase B: an experimental paper pilot (`app/fx/ibkr/pilot.py`) and paper order
+  executor (`app/fx/ibkr/execution.py`).
+  - Dry-run by default; explicit `--arm --confirm ARMAR-PAPER`.
+  - DU identity checked before each order; LIVE, fresh quotes only.
+  - Protected bracket entries with protection confirmation.
+  - Idempotent client order ids, write-ahead journal, and reconciliation instead of blind
+    resends.
+  - Closes that never reverse a position.
+  - Isolated virtual capital and state.
+  - Candidate retirement and replacement (or NO TRADE).
+  - `app/fx/strategy.py`: the signal-model contract.
 - TraderInvest FX (ADR-0036 to ADR-0038): Forex domain (`app/fx`) with bid/ask quotes and data
   origin labels, SIMULATION/DEMO/REAL environments (REAL refused by the ADR-0006 guard), 24/5
   calendar with the 17:00 New York trading day, five agents and a portfolio coordinator, a

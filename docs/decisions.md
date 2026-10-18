@@ -1223,3 +1223,34 @@ acceptance difference not listed as intended reverts that step.
      the trade ≥ 50 % of equity; net exposure per currency ≤ 600 % of equity. No pyramiding.
   7. Changing risk settings applies immediately but never clears an engaged lock or the kill
      switch; account currency/capital change only through an explicit account reset.
+
+## ADR-0039 — IBKR paper pilot (phase B)
+
+**Status:** accepted 2026-10-18 (owner authorization: paper orders only).
+
+**Context.** No rule agent passed the pre-registered holdout. The owner asked for agents to be
+trained, and for any that fail to be replaced, with entries on the demo (paper) account.
+Retrospective selection on already-inspected history is not independent validation.
+
+**Decision.**
+- Trained candidates trade only through a separate pilot process, on the IBKR **paper**
+  account, labelled PILOTO EXPERIMENTAL. They are never "approved".
+- The pilot is dry-run unless armed explicitly on every start, and uses virtual capital
+  (10 000 EUR) with its own store.
+- The central risk manager applies in environment DEMO.
+- Each order requires a paper identity check immediately before sending, a write-ahead
+  intention, and a deterministic `orderRef` looked up before sending.
+- An unanswered order is reconciled and never resent; it engages the kill switch after 3
+  cycles.
+- An entry whose stop or target IBKR does not confirm stops the pilot with an alarm.
+- A close cancels protection and waits for confirmation. If the protection already executed,
+  no closing order is sent.
+- Retirement follows the predeclared rule in `retirement_decision` (5 R decline, or 20 trades
+  with negative mean and PF < 1), using closed trades deduplicated by execution id. An empty
+  slot means NO TRADE.
+- The Gateway's Read-Only API setting is changed by the owner only, never by code.
+- The REAL environment stays blocked (ADR-0006).
+
+**Consequences.** The pilot produces prospective paper evidence, not proof of an edge. On
+2026-10-18 no candidate was eligible, so it observes and journals but does not trade.
+

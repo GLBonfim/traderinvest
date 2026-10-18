@@ -130,6 +130,51 @@ def smoke_test_ui() -> None:
         raise SystemExit("the frozen UI did not receive engine data")
 
 
+def clean_dist(target: Path | None = None) -> None:
+    """Deletes the previous build only when it is a real folder strictly inside dist/ of this
+    repository (never a link/junction or anything that resolves elsewhere)."""
+    target = DIST if target is None else target
+    if not target.exists() and not target.is_symlink():
+        return
+    resolved, root = target.resolve(), (ROOT / "dist").resolve()
+    if target.is_symlink() or not resolved.is_relative_to(root) or resolved == root:
+        raise SystemExit(f"refusing to delete {target} (resolves to {resolved})")
+    print(f"clean: {resolved}")
+    shutil.rmtree(resolved)
+
+
+def check_pilot_run(run: Path) -> None:
+    """The shipped selection must be a valid experimental registry (never approval)."""
+    from app.fx.agents.trained import load_models
+
+    active = load_models(run / "selected.json")
+    names = ", ".join(m.model_id for m in active) or "NENHUM elegível (NO TRADE)"
+    print(f"pilot selection: {run} -> {names}")
+
+
+def copy_pilot_launchers() -> None:
+    """Double-click launchers (verify / dry-run) and the guide, next to the executable."""
+    for p in (ROOT / "packaging" / "pilot").iterdir():
+        shutil.copy2(p, DIST / p.name)
+
+
+def smoke_test_pilot() -> None:
+    """The frozen exe must run the paper pilot's offline self-check (no IBKR connection)."""
+    exe = DIST / "TraderInvestFX.exe"
+    with tempfile.TemporaryDirectory() as tmp:
+        proc = subprocess.run(  # noqa: S603 - the executable this script just built
+            [str(exe), "--paper-pilot", "--self-check", "--dir", tmp],
+            capture_output=True,
+            timeout=120,
+            check=False,
+        )
+    out = proc.stdout.decode("utf-8", errors="replace")
+    print(f"pilot smoke test: exit {proc.returncode}")
+    if proc.returncode != 0 or "auto-verificação OK" not in out:
+        tail = (out + proc.stderr.decode("utf-8", errors="replace"))[-4000:]
+        raise SystemExit(f"the frozen paper pilot failed its self-check: {tail}")
+
+
 def portable_zip() -> Path:
     from app.desktop import APP_VERSION
 
@@ -173,14 +218,23 @@ def compile_installer() -> Path | None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--installer", action="store_true", help="also compile with Inno Setup 6")
+    parser.add_argument(
+        "--pilot-run",
+        type=Path,
+        default=ROOT / "data" / "fx" / "training" / "run-20261018",
+        help="training run whose selected.json the paper pilot ships",
+    )
     args = parser.parse_args()
+    check_pilot_run(args.pilot_run)
+    os.environ["TRADERINVEST_PILOT_RUN"] = str(args.pilot_run.resolve())
     print("icon:", render_icon())
     print("version:", version_resource())
-    if DIST.exists():
-        shutil.rmtree(DIST)
+    clean_dist()
     pyinstaller()
+    copy_pilot_launchers()
     smoke_test_engine()
     smoke_test_ui()
+    smoke_test_pilot()
     size = sum(p.stat().st_size for p in DIST.rglob("*") if p.is_file()) / 1e6
     print(f"dist: {DIST} ({size:.0f} MB)")
     print("zip:", portable_zip())

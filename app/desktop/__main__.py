@@ -3,8 +3,11 @@
 `TraderInvestFX.exe` starts the UI; `TraderInvestFX.exe --engine ...` runs the engine process
 (the UI launches itself that way), so one executable ships both.
 `TraderInvestFX.exe --smoke-test [screenshot.png]` checks a build without user interaction.
+`TraderInvestFX.exe --paper-pilot [...]` runs the separate PILOTO EXPERIMENTAL on the IBKR
+paper account (dry-run unless armed explicitly; see docs/fx-platform.md).
 """
 
+import contextlib
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,6 +22,8 @@ def main(argv: list[str] | None = None) -> int:
         from app.engine.__main__ import main as engine_main
 
         return engine_main(args[1:])
+    if args[:1] == ["--paper-pilot"]:
+        return paper_pilot(args[1:])
 
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
@@ -51,6 +56,29 @@ def main(argv: list[str] | None = None) -> int:
     win = MainWindow()
     win.show()
     return app.exec()
+
+
+def paper_pilot(args: list[str]) -> int:
+    """The experimental IBKR paper pilot (`app.fx.ibkr.pilot`), separate from the GUI and its
+    simulation. The windowed executable has no console: one is opened for the pilot so its
+    messages and Ctrl+C work (when output is redirected, e.g. a build check, it is kept)."""
+    opened = False
+    if sys.platform == "win32" and sys.stdout is None:
+        import ctypes
+
+        if ctypes.windll.kernel32.AllocConsole():
+            opened = True
+            ctypes.windll.kernel32.SetConsoleTitleW("TraderInvest FX — PILOTO EXPERIMENTAL (paper)")
+            sys.stdout = open("CONOUT$", "w", encoding="utf-8", buffering=1)  # noqa: SIM115
+            sys.stderr = sys.stdout
+            sys.stdin = open("CONIN$", encoding="utf-8")  # noqa: SIM115
+    from app.fx.ibkr.pilot import main as pilot_main
+
+    code = pilot_main(args)
+    if opened:
+        with contextlib.suppress(EOFError, OSError):
+            input("\nPrima Enter para fechar esta janela.")
+    return code
 
 
 def smoke_test(app: "QApplication", screenshot: Path | None, seconds: int = 15) -> int:

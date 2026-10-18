@@ -85,3 +85,41 @@ def test_installer_compiler_failure_is_not_ignored(
     with pytest.raises(subprocess.CalledProcessError):
         build_module.compile_installer()
     assert run.call_args.kwargs["check"] is True
+
+
+@pytest.mark.parametrize(
+    ("stdout", "code", "accepted"),
+    [("auto-verificação OK", 0, True), ("", 0, False), ("auto-verificação OK", 1, False)],
+)
+def test_pilot_build_gate(
+    build_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    stdout: str,
+    code: int,
+    accepted: bool,
+) -> None:
+    result = Mock(returncode=code, stdout=stdout.encode("utf-8"), stderr=b"")
+    monkeypatch.setattr(build_module.subprocess, "run", Mock(return_value=result))
+    if accepted:
+        build_module.smoke_test_pilot()
+    else:
+        with pytest.raises(SystemExit, match="self-check"):
+            build_module.smoke_test_pilot()
+
+
+def test_clean_dist_only_inside_repository_dist(
+    build_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(build_module, "ROOT", tmp_path)
+    inside = tmp_path / "dist" / "TraderInvestFX"
+    inside.mkdir(parents=True)
+    (inside / "x.txt").write_text("x")
+    build_module.clean_dist(inside)
+    assert not inside.exists()
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    with pytest.raises(SystemExit, match="refusing"):
+        build_module.clean_dist(outside)
+    with pytest.raises(SystemExit, match="refusing"):
+        build_module.clean_dist(tmp_path / "dist")
+    assert outside.exists()
