@@ -56,6 +56,13 @@ class StaleQuoteError(RuntimeError):
     pass
 
 
+class SendBlockedError(ExecutionError):
+    """A caller guard vetoed the send right before `placeOrder`: nothing was sent."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, ambiguous=False)
+
+
 class IbExecClient(Protocol):
     def managedAccounts(self) -> list[str]: ...
 
@@ -410,6 +417,35 @@ class IbkrPaperExecutor:
         order = self.orders.market("SELL" if units > 0 else "BUY", abs(float(units)))
         order.orderRef, order.tif = client_order_id, "DAY"
         order.account = self.verify_paper()  # right before sending
+        trade = self.client.placeOrder(contract, order)
+        return await self._await_parent(trade, client_order_id)
+
+    async def place_market(
+        self,
+        symbol: str,
+        side: Side,
+        units: float,
+        client_order_id: str,
+        guard: Callable[[], None] | None = None,
+    ) -> OrderStatus:
+        """A plain DAY market order WITHOUT protection: only for explicit cash conversions
+        (e.g. the paper lab's one-time currency buffers), never for strategy entries.
+        Same guarantees: paper identity before sending, lookup first (never twice),
+        ambiguous on timeout. `guard` runs immediately before `placeOrder` (after every
+        await) and vetoes the send by raising SendBlockedError."""
+        if units <= 0:
+            raise ExecutionError("units must be > 0", ambiguous=False)
+        self.verify_paper()
+        existing = await self.find(client_order_id)
+        if existing is not None:
+            return existing
+        contract = self.contract_factory(symbol)
+        await self.client.qualifyContractsAsync(contract)
+        order = self.orders.market("BUY" if side is Side.BUY else "SELL", float(units))
+        order.orderRef, order.tif = client_order_id, "DAY"
+        order.account = self.verify_paper()  # right before sending
+        if guard is not None:
+            guard()  # no await between this and placeOrder
         trade = self.client.placeOrder(contract, order)
         return await self._await_parent(trade, client_order_id)
 

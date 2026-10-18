@@ -65,6 +65,9 @@ class FakeIB:
         self.cancel_ack = True
         self.data_types: list[int] = []
         self.on_qualify: Callable[[], None] | None = None
+        self.cash: dict[str, float] = {"EUR": 1_000_000.0}
+        self.report_positions = True  # False: IBKR does not show conversions as positions
+        self.on_place: Callable[[Any], None] | None = None
 
     # --- session --------------------------------------------------------------------------
 
@@ -117,12 +120,17 @@ class FakeIB:
         sym = f"{trade.contract.symbol}{trade.contract.currency}"
         sign = 1 if o.action == "BUY" else -1
         self.positions[sym] = self.positions.get(sym, 0.0) + sign * qty
+        base, quote = sym[:3], sym[3:]
+        self.cash[base] = self.cash.get(base, 0.0) + sign * qty
+        self.cash[quote] = self.cash.get(quote, 0.0) - sign * qty * price
 
     def _price(self, trade: SimpleNamespace) -> float:
         t = self.tickers[f"{trade.contract.symbol}{trade.contract.currency}"]
         return float(t.ask if trade.order.action == "BUY" else t.bid)
 
     def placeOrder(self, contract: Any, order: Any) -> SimpleNamespace:  # noqa: N802
+        if self.on_place is not None:
+            self.on_place(order)
         self.next_id += 1
         order.orderId = order.orderId or self.next_id
         order.permId = 9000 + self.next_id
@@ -162,6 +170,25 @@ class FakeIB:
 
     def openTrades(self) -> list[Any]:  # noqa: N802
         return [t for t in self._trades if t.orderStatus.status not in ("Filled", "Cancelled")]
+
+    def accountValues(self) -> list[Any]:  # noqa: N802
+        rows = [
+            SimpleNamespace(tag="$LEDGER-CashBalance", currency=c, value=f"{v:.2f}")
+            for c, v in self.cash.items()
+        ]
+        base = SimpleNamespace(
+            tag="$LEDGER-CashBalance", currency="BASE", value=f"{self.cash.get('EUR', 0):.2f}"
+        )
+        return [*rows, base]
+
+    async def reqPositionsAsync(self) -> list[Any]:  # noqa: N802
+        if not self.report_positions:
+            return []
+        return [
+            SimpleNamespace(contract=contract(sym), position=units)
+            for sym, units in self.positions.items()
+            if units
+        ]
 
     async def reqCompletedOrdersAsync(self, apiOnly: bool) -> list[Any]:  # noqa: N802, N803
         return list(self.completed)
