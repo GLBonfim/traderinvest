@@ -17,6 +17,7 @@ from app.desktop.icon import app_icon, icon_image
 from app.desktop.main_window import MainWindow
 from app.desktop.opsroom import OpsRoom
 from app.desktop.panels import money, pct, price
+from app.desktop.paper_panel import PaperLabPanel
 from app.desktop.theme import STATUS
 from tests.unit.fx.helpers import orchestrator
 
@@ -45,6 +46,40 @@ def test_formatting() -> None:
     assert money(10234.5, "EUR") == "10 234,50 EUR"
     assert pct(-1.234) == "-1,23%"
     assert price(1.234567, "EURUSD") == "1.23457" and price(150.1234, "USDJPY") == "150.123"
+
+
+def test_paper_ui_does_not_call_stale_agents_active(app: QApplication, tmp_path: Path) -> None:
+    panel = PaperLabPanel(root=tmp_path)
+    panel.apply_snapshot(
+        {
+            "fresh": False,
+            "age": 600,
+            "journal_ok": True,
+            "status": {
+                "armed": True,
+                "agents": [{"id": "P-one", "role": "reversao", "active": True, "closed_trades": 0}],
+            },
+        }
+    )
+    assert panel.state.text().startswith("PAUSADO")
+    assert panel.agents.item(0, 1).text() == "Sem confirmação atual"
+    panel.apply_snapshot(
+        {"fresh": True, "age": 5, "journal_ok": None, "status": {"armed": True, "agents": []}}
+    )
+    assert panel.state.text().startswith("PAUSADO")
+    assert "Entradas de agentes: —" in panel.summary.text()
+    panel.deleteLater()
+
+
+def test_default_paper_screen_does_not_start_simulation_or_another_lab(app: QApplication) -> None:
+    from PySide6.QtCore import QProcess
+
+    w = MainWindow(remember_geometry=False)
+    assert w.modes.currentIndex() == 0
+    w._start_engine_for_mode()
+    assert w.supervisor.proc.state() == QProcess.ProcessState.NotRunning
+    w._quitting = True
+    w.close()
 
 
 def test_icon(app: QApplication) -> None:
@@ -149,3 +184,68 @@ def test_agents_panel_never_shows_a_demo_agent_as_approved(
     text = panel.status.text()
     assert expected in text and forbidden not in text
     assert panel.status.wordWrap()
+
+
+def test_simple_overview_keeps_results_and_separates_tests(
+    app: QApplication, tmp_path: Path
+) -> None:
+    panel = PaperLabPanel(tmp_path)
+    snapshot = {
+        "fresh": True,
+        "journal_ok": True,
+        "age": 3,
+        "agent_results": {"one": 5.93, "two": 4.65},
+        "counts": {"pilot_close": 2},
+        "closed_trades": [
+            {
+                "symbol": "EURGBP",
+                "entry": 0.8426,
+                "exit": 0.841,
+                "pnl": 5.93,
+                "reason": "alvo",
+                "time": "2026-10-20T11:19:00+00:00",
+                "model_id": "one",
+            }
+        ],
+        "tests": [{"ref": "TEST", "pnl": -7.65, "state": "Fechado"}],
+        "status": {
+            "armed": True,
+            "open": {},
+            "agents": [{"id": "one", "role": "reversao", "active": True, "closed_trades": 1}],
+        },
+    }
+    panel.apply_snapshot(snapshot)
+    assert panel.kpis["pnl"].text() == "+10.58 €"
+    assert panel.closed.rowCount() == 1 and panel.tests.rowCount() == 1
+    assert panel.agents.item(0, 4).text() == "+5.93"
+    assert panel.tabs.tabText(0) == "Visão geral"
+    assert "Nenhuma operação aberta" in panel.next_step.text()
+    assert snapshot["agent_results"] == {"one": 5.93, "two": 4.65}
+    panel.apply_snapshot({**snapshot, "fresh": False})
+    assert panel.state.text().startswith("PAUSADO") and "último registro" in panel.next_step.text()
+    panel.apply_snapshot({**snapshot, "journal_ok": None})
+    assert panel.kpis["pnl"].text() == "—" and panel.closed.rowCount() == 0
+    panel.timer.stop()
+    panel.deleteLater()
+
+
+def test_budget_controls_only_queue_request_without_changing_journal(
+    app: QApplication, tmp_path: Path
+) -> None:
+    import json
+
+    (tmp_path / "status.json").write_text("{}")
+    (tmp_path / "pilot.sqlite").write_bytes(b"not a database")
+    panel = PaperLabPanel(tmp_path)
+    panel.capital_input.setValue(500)
+    panel.fixed_input.setChecked(True)
+    panel.order_input.setValue(1000)
+    panel.save_budget()
+    request = json.loads((tmp_path / "budget-request.json").read_text())
+    assert request["capital_eur"] == 500 and request["order_eur"] == 1000
+    assert request["fixed_order"] is True
+    assert len(request["request_id"]) == 32
+    assert (tmp_path / "pilot.sqlite").read_bytes() == b"not a database"
+    assert "Ainda não aplicado" in panel.budget_message.text()
+    panel.timer.stop()
+    panel.deleteLater()

@@ -89,7 +89,7 @@ def smoke_test(app: "QApplication", screenshot: Path | None, seconds: int = 15) 
 
     from app.desktop.main_window import MainWindow
 
-    win = MainWindow(remember_geometry=False)
+    win = MainWindow(remember_geometry=False, start_simulation=True)
     win.show()
     result = {"code": 2}
 

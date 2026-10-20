@@ -18,7 +18,10 @@ from typing import Any
 import pandas as pd
 
 from app.candles.engine import CandlestickEngine
+from app.candles.knowledge import VERSION as CANDLE_KNOWLEDGE_VERSION
+from app.candles.knowledge import explain_pattern
 from app.fx.agents.trained import LinearModel, feature_frame, model_signals, retirement_decision
+from app.fx.ibkr.budget_settings import BudgetRiskManager, apply_settings, configure, load_settings
 from app.fx.ibkr.execution import IbkrPaperExecutor
 from app.fx.ibkr.paper import mask
 from app.fx.ibkr.pilot import (
@@ -55,6 +58,7 @@ def market_analysis(mid: pd.DataFrame) -> dict[str, Any]:
             "family": str(r.family),
             "direction": 1 if r.orientation == "bullish" else -1,
             "strength": float(r.strength),
+            "knowledge": explain_pattern(str(r.pattern)),
         }
         for r in obs.itertuples()
         if r.orientation in ("bullish", "bearish") and r.context_requirements_met
@@ -62,6 +66,18 @@ def market_analysis(mid: pd.DataFrame) -> dict[str, Any]:
     finite = all(math.isfinite(float(f[n])) for n in ("atr", "er", "volatility_rank", "sma_gap"))
     return {
         "analyst": "analista-mercado-v1",
+        "knowledge_version": CANDLE_KNOWLEDGE_VERSION,
+        "candle_observations": [
+            {
+                "name": str(r.pattern),
+                "orientation": str(r.orientation),
+                "context_requirements_met": bool(r.context_requirements_met),
+                "prior_trend_observed": str(r.prior_trend),
+                "strength_is_probability": False,
+                "knowledge": explain_pattern(str(r.pattern)),
+            }
+            for r in obs.itertuples()
+        ],
         "bar_open": mid.index[-1].isoformat(),
         "bar_close": (mid.index[-1] + pd.Timedelta(hours=1)).isoformat(),
         "regime": "tendencia" if f["er"] >= 0.25 else "lateral",
@@ -163,7 +179,11 @@ class FundedPaperExecutor(IbkrPaperExecutor):
     quote currency to manufacture a long entry; never invert a bullish candle signal.
     """
 
+    cash_guard: Any = None
+
     async def place_bracket(self, req: OrderRequest) -> OrderStatus:
+        if self.cash_guard is not None:
+            await self.cash_guard()
         self.verify_paper()
         if req.pair not in ("EURUSD", "EURGBP", "EURJPY") or req.side is not Side.SELL:
             raise ExecutionError("funded experiment admits EUR SELL entries only", ambiguous=False)
@@ -208,6 +228,12 @@ class CandleLab(PaperPilot):
         self, *args: Any, cohort: dict[str, Any], funded_eur_only: bool = False, **kwargs: Any
     ) -> None:
         super().__init__(*args, **kwargs)
+        self.risk = BudgetRiskManager(
+            self.risk.config, self.risk.state, self.risk.calendar, self.risk.environment
+        )
+        self.budget_settings = load_settings(self.store)
+        self.budget_status: dict[str, Any] = {"state": "current", "message": "Configuração atual."}
+        configure(self, self.budget_settings)
         self.funded_eur_only = funded_eur_only
         self.cohort = cohort
         self.roles = {a["model"]["model_id"]: a["role"] for a in cohort["agents"]}
@@ -215,6 +241,11 @@ class CandleLab(PaperPilot):
         self.entry_until = datetime.fromisoformat(cohort["entry_until"])
         self.scan_attempts: dict[str, tuple[str, datetime, int]] = {}
         self.analysis_cache: dict[str, tuple[str, pd.DataFrame, dict[str, Any], float]] = {}
+
+    async def _entry(self, now: datetime, quotes: dict[str, Any]) -> None:
+        if self.budget_status.get("state") == "waiting":
+            return  # finish existing trades before changing the budget; exits remain enabled
+        await super()._entry(now, quotes)
 
     async def _signals(self, now: datetime) -> list[dict[str, Any]]:
         if now >= self.entry_until:
@@ -336,6 +367,8 @@ class CandleLab(PaperPilot):
     def status(self) -> dict[str, Any]:
         result = super().status()
         result.update(
+            budget_settings=self.budget_settings,
+            budget_status=self.budget_status,
             funded_eur_only=self.funded_eur_only,
             experiment=SCHEMA,
             analyst="analista-mercado-v1",
@@ -385,6 +418,8 @@ async def run(args: argparse.Namespace) -> int:
     from ib_async import IB
 
     root = args.dir.resolve()
+    if args.cash_ledger and not args.funded_eur_only:
+        raise ValueError("cash ledger requires funded EUR-only paper mode")
     root.mkdir(parents=True, exist_ok=True)
     lock = (root / "runner.lock").open("a+b")
     lock.seek(0)
@@ -514,14 +549,60 @@ async def run(args: argparse.Namespace) -> int:
                             v != -1000 for v in baseline.values()
                         ):
                             raise ValueError("invalid funding baseline; no strategy orders allowed")
-                        pilot.fetch_positions = positions_without_funding(
-                            ib_positions_fetcher(ib), baseline
-                        )
+                        if args.cash_ledger:
+                            from app.fx.ibkr.cash_reconciliation import CashReconciler
+
+                            reconciler = CashReconciler(
+                                ib, store, root / "cash-anchor.json", root / "funding.json"
+                            )
+                            await reconciler()
+                            pilot.fetch_positions = reconciler
+                            if not isinstance(ex, FundedPaperExecutor):
+                                raise ValueError("cash ledger requires funded executor")
+                            ex.cash_guard = reconciler
+                        else:
+                            pilot.fetch_positions = positions_without_funding(
+                                ib_positions_fetcher(ib), baseline
+                            )
                 pilot.armed = funding["state"] == "complete" and not pilot.risk.state.kill_switch
             if not ib.isConnected():
                 raise ConnectionError(
                     "Gateway desconectado; supervisor deve rever antes de retomar"
                 )
+            request_path = root / "budget-request.json"
+            if request_path.exists():
+                try:
+                    if request_path.stat().st_size > 4096:
+                        raise ValueError("Pedido de configuração inválido.")
+                    request = json.loads(request_path.read_text(encoding="utf-8"))
+                    rid = request.get("request_id")
+                    if not isinstance(rid, str) or len(rid) != 32:
+                        raise ValueError("Identificador de configuração inválido.")
+                    if rid != pilot.budget_settings.get("request_id"):
+                        pilot.budget_status = {
+                            "state": "waiting",
+                            "request_id": rid,
+                            "message": "Aguardando conta reconciliada e nenhuma operação aberta.",
+                        }
+                        if not pilot.state.open and not pilot.state.pending:
+                            ex.verify_paper()
+                            positions = await pilot.fetch_positions()
+                            orders = await ib.reqAllOpenOrdersAsync()
+                            if not positions and not orders:
+                                pilot.budget_settings = apply_settings(pilot, request, rid)
+                                pilot.budget_status = {
+                                    "state": "applied",
+                                    "request_id": rid,
+                                    "message": "Aplicado. Resultados e proteções preservados.",
+                                }
+                    else:
+                        pilot.budget_status = {
+                            "state": "applied",
+                            "request_id": rid,
+                            "message": "Aplicado. Resultados e proteções preservados.",
+                        }
+                except (ValueError, KeyError, TypeError, OSError) as exc:
+                    pilot.budget_status = {"state": "rejected", "message": str(exc)}
             await pilot.cycle()
             status = pilot.status()
             status.update(
@@ -529,6 +610,9 @@ async def run(args: argparse.Namespace) -> int:
                 broker_preflight=preflight,
                 funding=funding,
                 requested_armed=bool(args.arm),
+                reconciliation_mode="cash_and_confirmed_executions"
+                if args.cash_ledger
+                else "virtual_fx_positions",
                 pid=os.getpid(),
                 connection="paper",
                 state=(
@@ -585,6 +669,7 @@ def main() -> int:
     parser.add_argument("--consent", required=True)
     parser.add_argument("--arm", action="store_true")
     parser.add_argument("--funded-eur-only", action="store_true")
+    parser.add_argument("--cash-ledger", action="store_true")
     parser.add_argument("--once", action="store_true")
     return asyncio.run(run(parser.parse_args()))
 

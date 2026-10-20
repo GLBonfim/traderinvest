@@ -28,3 +28,25 @@ Estado e diário: `data/fx/candle-lab-funded-paper/status.json` e `pilot.sqlite`
 O relatório separa propostas, intenções enviadas, preenchimentos e operações fechadas. Resultados líquidos do piloto são estimativas; nenhuma classificação de “melhor” é válida sem mostrar amostra e custos. O limite inicial de observação é de pelo menos 20 operações fechadas por candidato antes de conclusões de desempenho.
 
 Para parar novas ações, criar `STOP` na pasta desse experimento. Isso desarma o processo; as proteções existentes permanecem na corretora. Não apagar estado para reiniciar nem liberar kill switch automaticamente. Conferir posições e pendências antes de qualquer retomada.
+
+## Reconciliação por caixa e execuções confirmadas (19/10/2026)
+
+Depois de reconectar o Gateway, a API deixou de reportar as posições virtuais FX de
+preparação, embora os quatro saldos por moeda coincidissem exatamente com as conversões,
+o teste fechado e suas comissões. Posições virtuais e caixa por moeda são informações
+distintas na IBKR; ausência da primeira não demonstra que o caixa foi zerado.
+
+O modo explícito `--cash-ledger`, apenas com `--funded-eur-only`, utiliza uma âncora
+auditada em `cash-anchor.json`, vinculada à conta DU única e ao hash de funding.json.
+Ela só pode ser estabelecida sem exposição de estratégia ou ordens abertas, mediante
+reconstrução independente de todo o caixa a partir dos preenchimentos conhecidos.
+Não envia nem repete conversões e não modifica o baseline histórico da preparação.
+
+Cada execução posterior deve corresponder a uma intenção previamente registrada no
+diário. Quantidade, preço e comissão confirmada atualizam atomicamente o caixa esperado
+e as quantidades por par no diário encadeado. O caixa da corretora deve coincidir a cada
+ciclo e antes de uma entrada; uma execução desconhecida, comissão ausente, alteração de
+caixa, ordem externa, outro ativo, conta diferente ou mudança na âncora pausa o processo.
+Preenchimentos repetidos não são contabilizados novamente. Correções exigem revisão.
+A ausência de execuções antigas após reconexão não permite inventá-las: se a persistência
+não as contiver e o caixa não fechar, o sistema para. Esse modo não é aprovação dos modelos.

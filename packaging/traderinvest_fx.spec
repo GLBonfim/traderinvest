@@ -48,10 +48,16 @@ a = Analysis(
                    "zoneinfo", "tzdata",
                    # experimental paper pilot (inference is numpy/pandas + JSON numbers)
                    "app.fx.ibkr.pilot", "app.fx.ibkr.execution", "app.fx.agents.trained",
-                   "aeventkit", "nest_asyncio", *collect_submodules("ib_async")],
+                   "eventkit", "nest_asyncio", *collect_submodules("ib_async")],
     excludes=EXCLUDES,
     noarchive=False,
 )
+# This Windows Qt build imports the OS ICU ABI. An unrelated Poppler directory on
+# PATH can make analysis collect ICU 78 instead, whose versioned exports cannot
+# satisfy QtCore. Keep the Windows system dependency out of the portable bundle.
+if os.name == "nt":
+    a.binaries = [entry for entry in a.binaries
+                  if Path(entry[0]).name.lower() != "icuuc.dll"]
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz,

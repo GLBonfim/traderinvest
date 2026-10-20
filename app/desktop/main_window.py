@@ -7,7 +7,7 @@ the next start). F11 toggles full screen; the window is freely resizable.
 
 from typing import Any
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import QProcess, QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
@@ -38,6 +38,7 @@ from app.desktop.panels import (
     money,
     pct,
 )
+from app.desktop.paper_panel import PaperLabPanel
 from app.desktop.strings import t
 from app.desktop.theme import P, mono_font
 from app.engine.protocol import (
@@ -52,7 +53,9 @@ SPEEDS = [("1x  (1 min/s)", 1.0), ("2x", 2.0), ("5x", 5.0), ("10x", 10.0), ("20x
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, autostart: bool = True, remember_geometry: bool = True) -> None:
+    def __init__(
+        self, autostart: bool = True, remember_geometry: bool = True, start_simulation: bool = False
+    ) -> None:
         super().__init__()
         self.setWindowTitle(t("window_title"))
         self.setWindowIcon(app_icon())
@@ -63,12 +66,14 @@ class MainWindow(QMainWindow):
         self.supervisor = EngineSupervisor(self.client, self)
         self._quitting = False
         self._remember_geometry = remember_geometry
+        self._allow_engine_autostart = autostart
+        self._start_simulation = start_simulation or not autostart
         self._build()
         self._wire()
         if remember_geometry:
             self._restore_geometry()
         if autostart:
-            QTimer.singleShot(50, self.supervisor.start)
+            QTimer.singleShot(50, self._start_engine_for_mode)
 
     # --- layout -----------------------------------------------------------------------------
 
@@ -110,13 +115,39 @@ class MainWindow(QMainWindow):
             0, lambda: split.setSizes([int(self.width() * 0.6), int(self.width() * 0.4)])
         )
         v.addWidget(split, 1)
-        self.setCentralWidget(root)
+        self.modes = QTabWidget()
+        self.paper = PaperLabPanel()
+        self.modes.addTab(self.paper, "Conta demo • agentes")
+        self.modes.addTab(root, "Simulação local • sem corretora")
+        self.modes.setCurrentIndex(1 if self._start_simulation else 0)
+        self.setCentralWidget(self.modes)
         self.status_engine = QLabel(t("engine_starting"))
         self.status_beat = QLabel("")
         self.status_journal = QLabel("")
         for lbl in (self.status_engine, self.status_beat, self.status_journal):
             self.statusBar().addPermanentWidget(lbl)
         self._menu()
+        self.modes.currentChanged.connect(self._mode_changed)
+        self._mode_changed(self.modes.currentIndex())
+
+    def _start_engine_for_mode(self) -> None:
+        if (
+            self._allow_engine_autostart
+            and self.modes.currentIndex() == 1
+            and self.supervisor.proc.state() == QProcess.ProcessState.NotRunning
+        ):
+            self.supervisor.start()
+
+    def _mode_changed(self, index: int) -> None:
+        self.setWindowTitle(
+            "TraderInvest FX — Conta demo • agentes"
+            if index == 0
+            else "TraderInvest FX — Simulação local"
+        )
+        for label in (self.status_engine, self.status_beat, self.status_journal):
+            label.setVisible(index == 1)
+        self.menuBar().setVisible(index == 1)
+        QTimer.singleShot(0, self._start_engine_for_mode)
 
     def _header(self) -> QWidget:
         bar = QFrame()
@@ -459,7 +490,14 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, ev: QCloseEvent) -> None:  # noqa: N802 - Qt override
         if not self._quitting:
-            answer = QMessageBox.question(self, t("close_title"), t("close_body"))
+            message = (
+                "Fechar esta janela de acompanhamento? Os agentes da conta demo continuam "
+                "no laboratório independente. Se a simulação local estiver aberta, apenas "
+                "o motor dessa simulação será parado."
+                if self.modes.currentIndex() == 0
+                else t("close_body")
+            )
+            answer = QMessageBox.question(self, t("close_title"), message)
             if answer != QMessageBox.StandardButton.Yes:
                 ev.ignore()
                 return
