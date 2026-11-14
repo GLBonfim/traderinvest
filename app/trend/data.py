@@ -173,9 +173,9 @@ def build_market(
     """Load every series up to `through` (inclusive). Raises DataError on any failure."""
     end = pd.Timestamp(through)
     if end >= sealed_start(manifest):
-        from app.trend.guard import check_claim_for_manifest
+        from app.trend.guard import require_published_claim
 
-        check_claim_for_manifest(sealed_claim, manifest)
+        require_published_claim(sealed_claim, manifest)
     if end > pd.Timestamp(manifest["data_end"]):
         raise DataError("`through` is after the manifest's data end")
     roles = {f["role"]: data_root / f["path"] for f in manifest["files"]}

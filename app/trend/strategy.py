@@ -46,13 +46,20 @@ class TrendPolicy:
             if state not in (LONG, CASH):
                 continue  # INSUFFICIENT_DATA never opens or closes a position
             vol, stale = float(row["vol"]), bool(row["stale"])
-            if not vol_is_usable(vol, stale):
-                self.flags.append(f"{ctx.day.date()} {a}: unusable volatility, no trade")
-                continue
-            w_target = target_weight(state, vol, n)
             px = ctx.prices.get(a)
             w_actual = (ctx.units[a] * px / ctx.nav) if px and ctx.nav > 0 else 0.0
-            trade = needs_trade(state, self.last_state.get(a), w_actual, w_target)
+            if state == CASH:
+                # An exit never depends on volatility: CASH with an open position always sells.
+                w_target = 0.0
+                last = self.last_state.get(a)
+                trade = ctx.units[a] > 0 or needs_trade(state, last, w_actual, w_target)
+            elif not vol_is_usable(vol, stale):
+                # Unusable volatility blocks only buys and position changes of a LONG asset.
+                self.flags.append(f"{ctx.day.date()} {a}: unusable volatility, no buy or resize")
+                continue
+            else:
+                w_target = target_weight(state, vol, n)
+                trade = needs_trade(state, self.last_state.get(a), w_actual, w_target)
             self.decisions.append(
                 {
                     "date": ctx.day,

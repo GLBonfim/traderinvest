@@ -39,8 +39,10 @@ versioning: [SemVer](https://semver.org/).
   `runner.py`. Manifest amended with unit anchors (`7276157c…` → `d945583a…`). 68 tests,
   including a hand-calculated accounting case, causality under mutated/deleted/appended future
   data and byte-identical reproduction. The strategy was not run on real data (loading and
-  anchor checks only; see `docs/trend/t2-motor.md`). Choices of design section 19 and the
-  anchor amendment are proposals pending owner review.
+  anchor checks only; see `docs/trend/t2-motor.md`). Owner review of design section 19:
+  choices 1–5 and 7 and the anchor amendment approved; exits never depend on volatility
+  (choice 6, `test_strategy.py`); the sealed claim receipt must be committed and pushed before
+  any sealed read, enforced by `guard.require_published_claim` (choice 8). 73 tests.
 
 ## [Unreleased] — branch `feature/fx-desktop-platform`
 

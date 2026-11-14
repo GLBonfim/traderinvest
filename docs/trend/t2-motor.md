@@ -172,3 +172,17 @@ guarda as duas.
 Este relatório, o código, os testes, a seção 19 do desenho e a emenda dos preços âncora estão
 no git como **proposta**. As 8 escolhas e a emenda ficam pendentes da sua revisão. A T3 não
 começou.
+
+**Revisão do dono (14/11/2026):**
+- **Aprovadas:** as escolhas 1, 2, 3, 4, 5 e 7, e a emenda dos preços âncora.
+- **Escolha 6, corrigida:** uma saída (estado CAIXA com posição aberta) executa-se sempre,
+  qualquer que seja a volatilidade. A volatilidade inutilizável só bloqueia compras e mudanças
+  de tamanho. Há um teste novo: um ativo com posição, dados parados e estado a passar para CAIXA
+  gera a ordem de venda, e a venda executa-se.
+- **Escolha 8, reforçada:**
+  - A fronteira, criada no início da T3, vai para o git.
+  - Na T4 a ordem é: (1) criar a reivindicação; (2) commit e push do recibo; (3) só depois ler
+    os dados selados.
+  - O leitor de dados recusa as linhas seladas se o recibo não estiver igual no registro e no
+    ramo remoto.
+- **Testes:** 73 passam.

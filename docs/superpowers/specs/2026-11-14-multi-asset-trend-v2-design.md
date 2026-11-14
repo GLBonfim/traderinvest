@@ -495,16 +495,18 @@ hash of each replaced manifest:
 - `5f50f2ae…` → `7276157c…`: product swap. IQQJ and IQQE files added, EWJ and EEM files dropped;
   every kept file byte-identical; data end unchanged; audit PASS; evaluable start, length and
   60/20/20 boundaries unchanged (only the per-asset warm-up dates in `window` changed).
-- `7276157c…` → `d945583a…` (T2, section 19, **proposal pending owner review**): unit-price
+- `7276157c…` → `d945583a…` (T2, section 19, approved by the owner): unit-price
   anchors. The Xetra series of the six
   proxy assets' products were added as anchor files only, and `unit_anchors` was recorded. No
   file changed; window and split unchanged.
 
 Amendments are allowed only before the first result.
 
-## 19. T2 implementation choices (2026-11-14, before any result; pending owner approval)
+## 19. T2 implementation choices (2026-11-14, before any result; reviewed by the owner)
 
 These make sections 6 to 12 executable. None uses a result; all are covered by tests.
+Owner review (2026-11-14): choices 1, 2, 3, 4, 5 and 7 approved as written; choice 6
+corrected and choice 8 strengthened as below; the unit-price anchor amendment approved.
 
 1. **One set of decisions per run, from the realistic series.** States, volatility and target
    weights come from the realistic-scenario EUR total-return series. A cost scenario changes
@@ -527,11 +529,21 @@ These make sections 6 to 12 executable. None uses a result; all are covered by t
 5. **Fills.** On each day, sells fill before buys, each in asset-id order. A buy is cut to the
    whole units the cash pays for, after costs. The cut remainder is dropped, not carried. A buy
    that cannot pay for one unit is dropped and logged.
-6. **Fail-closed asset.** Unusable volatility (undefined, zero, or a stale window with more
-   than 5 consecutive zero returns among the last 60) means no trade for that asset that day.
-   The run is flagged, and the asset's last state is not updated.
+6. **Exits never depend on volatility (corrected by the owner).** An asset in `CASH` with an
+   open position always gets its sell order, whatever its volatility. Unusable volatility
+   (undefined, zero, or a stale window with more than 5 consecutive zero returns among the
+   last 60) blocks only buys and position changes of a `LONG` asset: no order that day, the
+   run is flagged, and the asset's last state is not updated. Test:
+   `tests/unit/trend/test_strategy.py`.
 7. **Annualisation.** Sharpe uses `(sessions − 1) / years` periods per year, with
    `years = calendar days / 365.25`. The EUR-cash return of each day uses the previous day's
    rate (ACT/360), as in section 6.5.
-8. **Sealed guard files** live in `data/trend/guard/` (outside Git). The boundary is created
-   before the first development run in T3, and the claim receipt is committed in the T4 report.
+8. **Sealed guard and publication order (strengthened by the owner).** The guard files live
+   in `data/trend/guard/` (outside Git); copies go to the registry and to Git.
+   - T3 start: the boundary is created and its copy
+     `app/trend/registry/sealed_boundary.json` is committed before the first development run.
+   - T4, in this order: (1) create the sealed claim; (2) commit and push the receipt
+     `app/trend/registry/sealed_claim.json` (protocol hash, code commit, manifest hash,
+     reference capital, UTC date and time); (3) only then read sealed data. The data loader
+     enforces (3): it refuses sealed rows unless the registry receipt and the receipt on the
+     upstream branch both equal the claim (`guard.require_published_claim`).

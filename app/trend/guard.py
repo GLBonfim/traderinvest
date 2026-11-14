@@ -7,22 +7,40 @@ Same pattern as `app/fx/research/holdout_guard.py`, re-implemented here:
 - `claim_sealed` consumes the sealed test once: it creates the claim file exclusively and
   records the protocol hash, code commit, manifest hash and reference capital. There is no
   reset or release API. An empty or partial claim left by a crash still counts as consumed.
-- `check_claim_for_manifest` is what the data loader calls before it reads sealed rows.
+- `check_claim_for_manifest` checks that a claim is consumed and made for this manifest.
+
+Publication order (owner decision 2026-11-14, design section 19):
+
+- T3 start: `publish_boundary` creates the boundary and copies it to
+  ``app/trend/registry/sealed_boundary.json``, which is committed to Git before the first
+  development run.
+- T4: (1) `claim_sealed` creates the claim and copies the receipt (protocol hash, code commit,
+  manifest hash, reference capital, UTC date and time) to
+  ``app/trend/registry/sealed_claim.json``; (2) the receipt is committed and pushed; (3) only
+  then may sealed rows be read. `require_published_claim`, called by the data loader, refuses
+  unless the registry receipt and the receipt on the upstream branch (``git show @{u}:path``)
+  both equal the claim.
 """
 
 import json
 import os
+import subprocess
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from app.trend.manifest import manifest_sha256
+from app.trend.universe import REGISTRY_DIR
 
 BOUNDARY_SCHEMA = "trend-sealed-boundary/1"
 CLAIM_SCHEMA = "trend-sealed-claim/1"
 BOUNDARY_NAME = ".trend-sealed-boundary.json"
 CLAIM_NAME = ".trend-sealed-claim.json"
 GUARD_ROOT = Path("data/trend/guard")
+PUBLISHED_BOUNDARY = REGISTRY_DIR / "sealed_boundary.json"
+PUBLISHED_CLAIM = REGISTRY_DIR / "sealed_claim.json"
+PUBLISHED_CLAIM_GIT_PATH = "app/trend/registry/sealed_claim.json"
 
 
 class GuardError(ValueError):
@@ -71,8 +89,9 @@ def claim_sealed(
     protocol_sha256: str,
     code_commit: str,
     reference_capital_eur: float,
+    publish_to: Path | None = PUBLISHED_CLAIM,
 ) -> dict[str, Any]:
-    """Consume the sealed test (once, forever). Returns the receipt."""
+    """Consume the sealed test (once, forever): step (1). Returns the receipt."""
     boundary = root / BOUNDARY_NAME
     if not boundary.is_file():
         raise GuardError("no sealed boundary: prepare it before any development run")
@@ -99,7 +118,54 @@ def claim_sealed(
         _write_exclusive(path, receipt)
     except FileExistsError as exc:
         raise GuardError(f"sealed test already consumed or claimed: {path}") from exc
+    if publish_to is not None:
+        _write_exclusive(publish_to, receipt)  # committed and pushed before any sealed read
     return receipt
+
+
+def publish_boundary(
+    root: Path, manifest: dict[str, Any], publish_to: Path = PUBLISHED_BOUNDARY
+) -> dict[str, Any]:
+    """Prepare the boundary and copy it to the registry (committed to Git at T3 start)."""
+    path = prepare_boundary(root, manifest)
+    record: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    if publish_to.exists():
+        if json.loads(publish_to.read_text(encoding="utf-8")) != record:
+            raise GuardError("published boundary differs from the frozen boundary")
+    else:
+        _write_exclusive(publish_to, record)
+    return record
+
+
+def git_upstream_receipt() -> dict[str, Any] | None:
+    """The receipt as committed on the upstream branch, or None if it is not there."""
+    try:
+        text = subprocess.run(  # noqa: S603 - fixed arguments, no user input
+            ["git", "show", "@{u}:" + PUBLISHED_CLAIM_GIT_PATH],  # noqa: S607 - git on PATH
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    receipt: dict[str, Any] = json.loads(text)
+    return receipt
+
+
+def require_published_claim(
+    claim: dict[str, Any] | None,
+    manifest: dict[str, Any],
+    published: Path = PUBLISHED_CLAIM,
+    upstream: Callable[[], dict[str, Any] | None] = git_upstream_receipt,
+) -> None:
+    """Step (3) gate: a consumed claim for this manifest whose receipt is committed and pushed."""
+    check_claim_for_manifest(claim, manifest)
+    if not published.is_file():
+        raise GuardError("the claim receipt is not in the registry; publish it first")
+    if json.loads(published.read_text(encoding="utf-8")) != claim:
+        raise GuardError("the registry receipt differs from the claim")
+    if upstream() != claim:
+        raise GuardError("the claim receipt is not committed and pushed to the upstream branch")
 
 
 def read_claim(root: Path) -> dict[str, Any]:

@@ -11,7 +11,9 @@ from app.trend.guard import (
     check_claim_for_manifest,
     claim_sealed,
     prepare_boundary,
+    publish_boundary,
     read_claim,
+    require_published_claim,
 )
 from app.trend.manifest import MANIFEST_PATH
 from app.trend.universe import load_universe
@@ -21,9 +23,14 @@ def _manifest(sealed: str = "2023-06-01", tag: str = "a") -> dict[str, Any]:
     return {"partitions": {"sealed": {"start": sealed}}, "tag": tag}
 
 
-def _claim(root: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+def _claim(root: Path, manifest: dict[str, Any], publish: Path | None = None) -> dict[str, Any]:
     return claim_sealed(
-        root, manifest, protocol_sha256="p" * 64, code_commit="abc1234", reference_capital_eur=5000
+        root,
+        manifest,
+        protocol_sha256="p" * 64,
+        code_commit="abc1234",
+        reference_capital_eur=5000,
+        publish_to=publish,
     )
 
 
@@ -89,3 +96,30 @@ def test_loader_refuses_sealed_rows_without_a_claim(tmp_path: Path) -> None:
             through=manifest["data_end"],
             sealed_claim={"schema": "trend-sealed-claim/1", "state": "consumed"},
         )
+
+
+def test_boundary_is_published_once_and_must_match(tmp_path: Path) -> None:
+    out = tmp_path / "sealed_boundary.json"
+    record = publish_boundary(tmp_path / "guard", _manifest(), out)
+    assert json.loads(out.read_text(encoding="utf-8")) == record
+    assert publish_boundary(tmp_path / "guard", _manifest(), out) == record  # idempotent
+    with pytest.raises(GuardError):
+        publish_boundary(tmp_path / "guard", _manifest(tag="b"), out)
+
+
+def test_sealed_reads_need_the_receipt_committed_and_pushed(tmp_path: Path) -> None:
+    m = _manifest()
+    guard, registry = tmp_path / "guard", tmp_path / "sealed_claim.json"
+    prepare_boundary(guard, m)
+    receipt = _claim(guard, m, publish=registry)  # step 1: claim and registry copy
+    assert receipt["claimed_at_utc"] and receipt["code_commit"] == "abc1234"
+    assert json.loads(registry.read_text(encoding="utf-8")) == receipt
+    with pytest.raises(GuardError, match="not committed and pushed"):
+        require_published_claim(receipt, m, registry, upstream=lambda: None)  # step 2 missing
+    with pytest.raises(GuardError, match="not committed and pushed"):
+        require_published_claim(receipt, m, registry, upstream=lambda: receipt | {"x": 1})
+    require_published_claim(receipt, m, registry, upstream=lambda: receipt)  # step 3 allowed
+    with pytest.raises(GuardError, match="not in the registry"):
+        require_published_claim(receipt, m, tmp_path / "absent.json", upstream=lambda: receipt)
+    with pytest.raises(GuardError, match="different manifest"):
+        require_published_claim(receipt, _manifest(tag="b"), registry, upstream=lambda: receipt)
