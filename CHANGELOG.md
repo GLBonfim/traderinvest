@@ -3,9 +3,27 @@
 All notable changes are documented here. Format: [Keep a Changelog](https://keepachangelog.com/),
 versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [Unreleased] — branch `feature/multi-asset-trend`
 
-Branch `feature/alpaca-paper-validation`. No external sandbox order has been placed.
+### Added (multi-asset trend v2, 2026-11-14)
+- Design v2 for one fixed, slow multi-asset trend strategy
+  (`docs/superpowers/specs/2026-11-14-multi-asset-trend-v2-design.md`, with the 2026-11-04 v1
+  design it supersedes in part) and ADR-0040: 10–15 UCITS exposures, daily 200-session SMA
+  long/cash signal, volatility-scaled weights, fill at the next close, EUR costs, 60/20/20 split
+  with a one-time sealed test.
+- `app/core/integrity.py` and `bootstrap_summary` in `app/validation/resampling.py`, copied
+  byte-identical from `feature/fx-desktop-platform` for reuse.
+- Phase T1 (`app/trend`): pre-registered 11-asset universe (`registry/universe.json`), free data
+  acquisition from Yahoo Finance and the ECB into hashed, never-overwritten snapshots
+  (`sources.py`), quality audit (`audit.py`: calendars, duplicates, stale prices, dividend
+  adjustment, EUR conversion staleness, EONIA/€STR chain, evaluable window, 60/20/20 partitions),
+  frozen manifest (`registry/manifest.json`, `registry/audit.json`) and CLI
+  `python -m app.trend.cli fetch|audit|verify`. Owner report:
+  `docs/trend/t1-universo-e-dados.md`. 22 tests in `tests/unit/trend`.
+
+## [Unreleased] — earlier, branch `feature/alpaca-paper-validation`
+
+No external sandbox order has been placed.
 
 ### Added
 - OPG submission window (`app/broker/timing.py`, ADR-0026): an `opg` order is sent only at or

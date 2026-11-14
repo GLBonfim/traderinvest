@@ -1,0 +1,180 @@
+{
+  "adr": "ADR-0040",
+  "audit_sha256": "15981bc794877bcd98ff70080d27bf0f60cab3952ab61fe1371aa03574062aa4",
+  "audit_verdict": "PASS",
+  "data_end": "2026-11-13",
+  "data_rules": {
+    "cash": "EONIA - 0.085 p.p. until 2019-09-30, EUR STR from 2019-10-01, minus 0.25 p.p., ACT/360, negative rates kept; interest from T-1 to T uses the rate for T-1.",
+    "data_end": "Last complete session before the snapshot; later rows are ignored.",
+    "eur_conversion": "USD series are divided by the ECB USD-per-EUR reference rate of the same date, or the latest earlier one; more than 4 weekdays of staleness fails closed.",
+    "master_calendar": "Union of the universe assets' provider rows.",
+    "sessions": "An asset's sessions are the provider's rows. Exchange-calendar differences are listed by the audit; a calendar session without a provider row is no session for that asset (its move is captured by the next row).",
+    "total_return": "Daily factor (close_t + dividend_t) / close_{t-1}; split-adjusted close; dividends gross at the ex-date, reinvested at that close. The provider's Adj Close is used only to verify the data."
+  },
+  "design": "docs/superpowers/specs/2026-11-14-multi-asset-trend-v2-design.md",
+  "files": [
+    {
+      "bytes": 1491483,
+      "origin": "https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A?format=csvdata",
+      "path": "2026-11-14/ecb/EXR_D.USD.EUR.SP00.A.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:30+00:00",
+      "role": "fx:USD",
+      "sha256": "9841ff429cd0542a49ea07a6d79c9db6809d44ea9250f88ca50329487301847c"
+    },
+    {
+      "bytes": 380823,
+      "origin": "yfinance 1.7.0: Ticker('ACWI').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/ACWI.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:30+00:00",
+      "role": "price:ACWI",
+      "sha256": "509cb2704ab1b72019a7196a3cfc585c518fc6fc720d552664ac651d3c87afe8"
+    },
+    {
+      "bytes": 404785,
+      "origin": "yfinance 1.7.0: Ticker('DJP').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/DJP.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:29+00:00",
+      "role": "price:DJP",
+      "sha256": "f727fdc3c3c01f95b385c23670b3b054741d6eac750e8137fb4328d92ee6e6be"
+    },
+    {
+      "bytes": 490559,
+      "origin": "yfinance 1.7.0: Ticker('EEM').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/EEM.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:28+00:00",
+      "role": "price:EEM",
+      "sha256": "2542882898735de449bcca656333b9c92c9c1b76221cd70224a5428056344f81"
+    },
+    {
+      "bytes": 508819,
+      "origin": "yfinance 1.7.0: Ticker('EPP').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/EPP.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:28+00:00",
+      "role": "price:EPP",
+      "sha256": "6ebaf84f7a9bd3384946b02b9486d909ff19ba304e104bf880303c6e0b07fbf7"
+    },
+    {
+      "bytes": 593222,
+      "origin": "yfinance 1.7.0: Ticker('EWJ').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/EWJ.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:27+00:00",
+      "role": "price:EWJ",
+      "sha256": "80c2a704a4a033fad01944f24f84857f39feeb05ec102e05abfabb20c6675da9"
+    },
+    {
+      "bytes": 384929,
+      "origin": "yfinance 1.7.0: Ticker('EXSA.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/EXSA.DE.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:27+00:00",
+      "role": "price:EXSA.DE",
+      "sha256": "e6711add8471ea6a9eb07e83a28c3fec663eddb829f3e6b5351db9ef3754b609"
+    },
+    {
+      "bytes": 452425,
+      "origin": "yfinance 1.7.0: Ticker('GLD').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/GLD.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:29+00:00",
+      "role": "price:GLD",
+      "sha256": "736707f7f1d98226a881eb962b42816296ccc18445848428c17622e41b5f5d99"
+    },
+    {
+      "bytes": 377629,
+      "origin": "yfinance 1.7.0: Ticker('IBCS.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IBCS.DE.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:29+00:00",
+      "role": "price:IBCS.DE",
+      "sha256": "0241af348df32adb57eb681d0af4b183ddc4c268e91f6ff858b950d97d5d4b76"
+    },
+    {
+      "bytes": 497584,
+      "origin": "yfinance 1.7.0: Ticker('IEF').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IEF.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:29+00:00",
+      "role": "price:IEF",
+      "sha256": "749823bdc95842c411393479a98e2a65e8bb66650c5296b82001353c9a4c9d91"
+    },
+    {
+      "bytes": 360378,
+      "origin": "yfinance 1.7.0: Ticker('IQQ6.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IQQ6.DE.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:30+00:00",
+      "role": "price:IQQ6.DE",
+      "sha256": "fbeda9178ea3dd36d870a92ddcfe371e619363ef2f2b614b53d08e3f41de4aa0"
+    },
+    {
+      "bytes": 676690,
+      "origin": "yfinance 1.7.0: Ticker('SPY').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/SPY.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:26+00:00",
+      "role": "price:SPY",
+      "sha256": "6e260bdfb10f52b7002a42e1b4a5d5f976951a3a0615fad4d7ecb22c6ad20010"
+    },
+    {
+      "bytes": 375806,
+      "origin": "yfinance 1.7.0: Ticker('XGLE.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/XGLE.DE.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:28+00:00",
+      "role": "price:XGLE.DE",
+      "sha256": "dc6ad0c47a011c66b063a8b94a7db11354b99e4a9bfdc492e6ae732af6ddd704"
+    },
+    {
+      "bytes": 2543761,
+      "origin": "https://data-api.ecb.europa.eu/service/data/EON/D.EONIA_TO.RATE?format=csvdata",
+      "path": "2026-11-14/ecb/EON_D.EONIA_TO.RATE.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:31+00:00",
+      "role": "rate:eonia",
+      "sha256": "e3dab718d57b468346ac7639480d47800fc73215cc6575fb840308dc14481cd8"
+    },
+    {
+      "bytes": 566306,
+      "origin": "https://data-api.ecb.europa.eu/service/data/EST/B.EU000A2X2A25.WT?format=csvdata",
+      "path": "2026-11-14/ecb/EST_B.EU000A2X2A25.WT.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:43+00:00",
+      "role": "rate:estr",
+      "sha256": "17070a1ec4735934e923c7d204784fea914ee0d2248bdc31f00f87397c6359e7"
+    }
+  ],
+  "parameters": {
+    "annualisation_vol": 252,
+    "drift_threshold": 0.25,
+    "sma_sessions": 200,
+    "vol_sessions": 60,
+    "vol_target": 0.1
+  },
+  "partitions": {
+    "development": {
+      "end": "2019-12-31",
+      "start": "2009-10-08"
+    },
+    "sealed": {
+      "end": "2026-11-13",
+      "start": "2023-06-01"
+    },
+    "validation": {
+      "end": "2023-05-31",
+      "start": "2020-01-02"
+    }
+  },
+  "schema": "trend-manifest/1",
+  "snapshot": "2026-11-14",
+  "universe_sha256": "7cebb3934a40b688dfcdb44290a5de277419dac87c7b3a1cff8ea3908d8187d1",
+  "window": {
+    "binding_asset": "GLOBAL_RE",
+    "data_end": "2026-11-13",
+    "evaluable_start": "2009-10-08",
+    "warmup_end": {
+      "COMMOD": "2007-08-16",
+      "EM_EQ": "2004-01-28",
+      "EUROPE_EQ": "2008-10-10",
+      "EUR_IG": "2008-10-13",
+      "EZ_GOV": "2008-10-10",
+      "GLOBAL_RE": "2009-10-08",
+      "GOLD": "2005-09-02",
+      "JAPAN_EQ": "1996-12-30",
+      "PACXJ_EQ": "2002-08-13",
+      "US_EQ": "1993-11-11",
+      "US_TSY": "2003-05-14"
+    },
+    "years": 17.098
+  }
+}
