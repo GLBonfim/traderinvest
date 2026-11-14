@@ -1,7 +1,7 @@
 # Multi-Asset Trend Strategy — Design v2
 
 Date: 2026-11-14
-Status: approved by the owner on 2026-11-14 with the corrections recorded in section 17; T1 decisions in section 18 (asset list pending owner review).
+Status: approved by the owner on 2026-11-14 with the corrections recorded in section 17; T1 decisions and the approved asset list in section 18.
 The owner pre-approved implementation of the OFFLINE scope below, phase by phase; each phase
 (T0–T4) ends with a report and waits for explicit approval.
 Branch: `feature/multi-asset-trend`, created from `main`.
@@ -471,18 +471,29 @@ Names may change; the economic rule, protocol and gates may not.
 3. **Global 60/40:** approved, with annual rebalance, start in cash and the same costs as the
    other benchmarks (section 9).
 4. **Series rule:** approved with three conditions.
-   (a) If no US ETF tracks the product's own index, the asset is excluded; it is never replaced
-   by a similar index. Enforced mechanically: a proxy's `tracks` must equal the product's
+   (a) If no US-listed ETF or ETN tracks the product's own index, the asset is excluded; it is
+   never replaced by a similar index (wording amended by the owner to admit ETNs). Enforced mechanically: a proxy's `tracks` must equal the product's
    `tracks` (`series_rule_violations`); the replay refuses to run otherwise.
    (b) Signal and EUR conversion use only values known at `D(T)`, given that the US close is
    later than the European one (section 6.1, data rule `availability`).
    (c) The TER difference between the US ETF and the European product is adjusted
    (sections 8.1, 8.2, data rule `ter`).
-5. **Asset list:** pending owner review. T2 does not start before it is approved. Open points
-   at the time of writing: `JAPAN_EQ` and `EM_EQ` violate condition (a) (IMI products against
-   non-IMI US proxies); `COMMOD`'s only long US history is an ETN (DJP), not an ETF.
+5. **Asset list (approved, second round).** `JAPAN_EQ` and `EM_EQ` violated condition (a)
+   (IMI products against non-IMI US proxies). They move to the non-IMI products IQQJ
+   (IE00B02KXH56, MSCI Japan) and IQQE (IE00B0M63177, MSCI Emerging Markets), whose own EUR
+   Xetra series start in 2008, so the series rule uses them directly. Cost class B for both was
+   fixed and committed before their download. `COMMOD` keeps DJP, an ETN on the same index;
+   the known limitations state that an ETN's market price can depart from the index value. The
+   other eight assets are approved unchanged. A pull of `origin/main` into this branch precedes
+   T2.
 
-**Manifest amendment.** The manifest was amended, not rebuilt: files, window, partitions,
-audit and parameters are unchanged; the universe hash, data rules and cost table were refreshed,
-and `amendments[]` chains the hash of the replaced manifest
-(`93d4e409…` → `5f50f2ae…`). Amendments are allowed only before the first result.
+**Manifest amendments.** The manifest is amended, never rebuilt, and `amendments[]` chains the
+hash of each replaced manifest:
+
+- `93d4e409…` → `5f50f2ae…`: decisions 1–4 (rules, costs, tiers); data, window and split
+  unchanged.
+- `5f50f2ae…` → `7276157c…`: product swap. IQQJ and IQQE files added, EWJ and EEM files dropped;
+  every kept file byte-identical; data end unchanged; audit PASS; evaluable start, length and
+  60/20/20 boundaries unchanged (only the per-asset warm-up dates in `window` changed).
+
+Amendments are allowed only before the first result.

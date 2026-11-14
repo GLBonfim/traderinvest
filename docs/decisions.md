@@ -560,5 +560,7 @@ each asset's tier in the manifest; global 60/40 rebalanced annually, starting in
 costs. Proxy rule: a US ETF proxy must track the product's own index or the asset is excluded
 (never a similar index); signal and EUR conversion use only values known at `D(T)`; a proxy's
 return is adjusted by the TER difference `(TER_us − TER_eu)`. The manifest is amended with a
-hash chain (data, window and split unchanged). The asset list awaits the owner's review; T2
-does not start before it. Design section 18.
+hash chain (data, window and split unchanged). Second round: Japan and emerging markets move to
+the non-IMI products IQQJ and IQQE (own EUR series, cost class B fixed before download); the
+proxy rule admits a US-listed ETF or ETN on the same index (DJP kept, ETN price/index gap
+declared); the asset list is approved. Design section 18.

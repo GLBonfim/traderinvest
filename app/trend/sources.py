@@ -125,6 +125,27 @@ def fetch_ecb(flow: str, key: str, role: str, root: Path, snapshot: str) -> File
     return _record(root, path, role, url, when)
 
 
+def needed_roles(universe: Universe) -> list[str]:
+    """Every file role the universe needs, in a fixed order."""
+    roles = [f"price:{a.research.symbol}" for a in universe.all_series()]
+    return [*roles, "fx:USD", "rate:eonia", "rate:estr"]
+
+
+def fetch_missing(
+    universe: Universe, root: Path, snapshot: str, existing: list[FileRecord]
+) -> list[FileRecord]:
+    """Download only the price series the universe needs and the snapshot lacks.
+
+    Existing files are never touched (`fetch_yahoo` refuses to overwrite).
+    """
+    have = {r.role for r in existing}
+    return [
+        fetch_yahoo(a.research.symbol, root, snapshot)
+        for a in universe.all_series()
+        if f"price:{a.research.symbol}" not in have
+    ]
+
+
 def fetch_all(universe: Universe, root: Path, snapshot: str) -> list[FileRecord]:
     """Download every series the universe needs into a new snapshot directory."""
     target = root / snapshot

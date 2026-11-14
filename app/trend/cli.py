@@ -23,11 +23,12 @@ from app.trend.manifest import (
     amend_manifest,
     build_manifest,
     manifest_sha256,
+    reaudit_amendment,
     run_audit,
     verify_manifest,
     write_json,
 )
-from app.trend.sources import FileRecord, fetch_all
+from app.trend.sources import FileRecord, fetch_all, fetch_missing
 from app.trend.universe import load_universe, series_rule_violations
 
 DATA_ROOT = Path("data/trend/raw")
@@ -45,6 +46,11 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     p_fetch = sub.add_parser("fetch", help="download a new raw snapshot")
     p_fetch.add_argument("--snapshot", required=True)
+    p_fetch.add_argument(
+        "--add-missing",
+        action="store_true",
+        help="add only the series a changed universe needs to an existing snapshot",
+    )
     p_audit = sub.add_parser("audit", help="audit a snapshot and freeze the manifest")
     p_audit.add_argument("--snapshot", required=True)
     p_audit.add_argument("--data-end", required=True)
@@ -52,13 +58,21 @@ def main(argv: list[str] | None = None) -> int:
     p_amend = sub.add_parser("amend", help="record registry/rule changes made before any result")
     p_amend.add_argument("--date", required=True)
     p_amend.add_argument("--reason", required=True)
+    p_amend.add_argument("--reaudit-snapshot", help="re-run the audit after new files were added")
     args = parser.parse_args(argv)
     root: Path = args.data_root
     universe = load_universe()
 
     if args.command == "fetch":
-        records = fetch_all(universe, root, args.snapshot)
         path = root / args.snapshot / RECORDS
+        if args.add_missing:
+            existing = _records(root, args.snapshot)
+            added = fetch_missing(universe, root, args.snapshot, existing)
+            records = existing + added
+            path.write_text(json.dumps([r.to_dict() for r in records], indent=1), encoding="utf-8")
+            print(f"{len(added)} file(s) added: {[r.role for r in added]}")
+            return 0
+        records = fetch_all(universe, root, args.snapshot)
         path.write_text(json.dumps([r.to_dict() for r in records], indent=1), encoding="utf-8")
         print(f"{len(records)} files written to {root / args.snapshot}")
         return 0
@@ -86,7 +100,19 @@ def main(argv: list[str] | None = None) -> int:
             for p in stale:
                 print(f"  {p}", file=sys.stderr)
             return 2
-        amended = amend_manifest(manifest, universe, args.date, args.reason)
+        if args.reaudit_snapshot:
+            if args.reaudit_snapshot != manifest["snapshot"]:
+                print("refused: re-audit must use the manifest's snapshot", file=sys.stderr)
+                return 2
+            records = _records(root, args.reaudit_snapshot)
+            report = run_audit(universe, records, root, manifest["data_end"])
+            if report["verdict"] != "PASS":
+                print("audit FAILED:\n  " + "\n  ".join(report["failures"]), file=sys.stderr)
+                return 1
+            amended = reaudit_amendment(manifest, universe, records, report, args.date, args.reason)
+            write_json(AUDIT_PATH, report)
+        else:
+            amended = amend_manifest(manifest, universe, args.date, args.reason)
         write_json(MANIFEST_PATH, amended)
         print(f"manifest amended: {manifest_sha256(manifest)} -> {manifest_sha256(amended)}")
         return 0

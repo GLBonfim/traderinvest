@@ -20,7 +20,7 @@
     "sessions_over_limit": 0,
     "sessions_without_prior_rate": 0
   },
-  "master_sessions": 8631,
+  "master_sessions": 8632,
   "partitions": {
     "development": {
       "end": "2019-12-31",
@@ -70,50 +70,50 @@
       "zero_volume_rows": 0
     },
     "EM_EQ": {
-      "adjustment_max_abs_diff": 8.30019079911537e-07,
+      "adjustment_max_abs_diff": 8.454060544949016e-07,
       "adjustment_sessions_above_tolerance": 0,
       "adjustment_worst_dates": [
-        "2005-03-01",
-        "2008-07-17",
-        "2008-04-21",
-        "2007-12-19",
-        "2006-04-03"
+        "2015-05-04",
+        "2008-09-19",
+        "2015-05-05",
+        "2020-10-20",
+        "2011-12-06"
       ],
-      "calendar": "XNYS",
-      "calendar_sessions": 5936,
-      "convention_max_abs_diff": 0.00043283743407318553,
-      "dividend_rows": 47,
+      "calendar": "XETR",
+      "calendar_sessions": 4793,
+      "convention_max_abs_diff": 0.0008516940511236193,
+      "dividend_rows": 51,
       "duplicates": 0,
-      "extra_rows": 0,
-      "extra_rows_sample": [],
-      "extreme_moves": [
-        {
-          "date": "2008-10-13",
-          "tr_return": 0.2277
-        },
-        {
-          "date": "2008-10-15",
-          "tr_return": -0.1617
-        },
-        {
-          "date": "2008-10-28",
-          "tr_return": 0.2093
-        }
+      "extra_rows": 5,
+      "extra_rows_sample": [
+        "2015-12-25",
+        "2017-06-05",
+        "2017-10-03",
+        "2017-10-31",
+        "2018-05-21"
       ],
-      "first": "2003-04-14",
+      "extreme_moves": [],
+      "first": "2008-01-02",
       "last": "2026-11-13",
-      "longest_constant_close_run": 3,
-      "longest_constant_close_run_end": "2003-06-20",
-      "missing_sessions": 0,
-      "missing_sessions_sample": [],
+      "longest_constant_close_run": 4,
+      "longest_constant_close_run_end": "2023-12-06",
+      "missing_sessions": 6,
+      "missing_sessions_sample": [
+        "2008-03-31",
+        "2011-10-03",
+        "2012-10-03",
+        "2013-10-03",
+        "2025-10-24",
+        "2026-03-06"
+      ],
       "monotonic": true,
       "nan_adj_close": 0,
       "nan_close": 0,
       "non_positive_close": 0,
-      "rows": 5936,
-      "split_rows": 2,
-      "symbol": "EEM",
-      "zero_volume_rows": 0
+      "rows": 4792,
+      "split_rows": 0,
+      "symbol": "IQQE.DE",
+      "zero_volume_rows": 261
     },
     "EUROPE_EQ": {
       "adjustment_max_abs_diff": 8.872467193166145e-07,
@@ -355,42 +355,51 @@
       "zero_volume_rows": 0
     },
     "JAPAN_EQ": {
-      "adjustment_max_abs_diff": 8.268138594891283e-07,
+      "adjustment_max_abs_diff": 6.3700702968017e-07,
       "adjustment_sessions_above_tolerance": 0,
       "adjustment_worst_dates": [
-        "2006-02-02",
-        "2010-04-16",
-        "2011-11-14",
-        "2010-10-06",
-        "1997-04-24"
+        "2015-07-27",
+        "2015-06-17",
+        "2015-05-26",
+        "2015-03-10",
+        "2016-06-02"
       ],
-      "calendar": "XNYS",
-      "calendar_sessions": 7716,
-      "convention_max_abs_diff": 0.0008517228149442779,
-      "dividend_rows": 50,
+      "calendar": "XETR",
+      "calendar_sessions": 4793,
+      "convention_max_abs_diff": 0.00016877102923706921,
+      "dividend_rows": 23,
       "duplicates": 0,
-      "extra_rows": 0,
-      "extra_rows_sample": [],
-      "extreme_moves": [
-        {
-          "date": "2008-10-13",
-          "tr_return": 0.1582
-        }
+      "extra_rows": 5,
+      "extra_rows_sample": [
+        "2015-12-25",
+        "2017-06-05",
+        "2017-10-03",
+        "2017-10-31",
+        "2018-05-21"
       ],
-      "first": "1996-03-18",
+      "extreme_moves": [],
+      "first": "2008-01-02",
       "last": "2026-11-13",
       "longest_constant_close_run": 4,
-      "longest_constant_close_run_end": "1997-01-03",
-      "missing_sessions": 0,
-      "missing_sessions_sample": [],
+      "longest_constant_close_run_end": "2023-12-06",
+      "missing_sessions": 7,
+      "missing_sessions_sample": [
+        "2011-10-03",
+        "2012-10-03",
+        "2013-10-03",
+        "2025-10-24",
+        "2026-03-06",
+        "2026-05-25",
+        "2026-06-01"
+      ],
       "monotonic": true,
       "nan_adj_close": 0,
       "nan_close": 0,
       "non_positive_close": 0,
-      "rows": 7716,
-      "split_rows": 1,
-      "symbol": "EWJ",
-      "zero_volume_rows": 0
+      "rows": 4791,
+      "split_rows": 0,
+      "symbol": "IQQJ.DE",
+      "zero_volume_rows": 291
     },
     "PACXJ_EQ": {
       "adjustment_max_abs_diff": 9.235117467421006e-07,
@@ -504,13 +513,13 @@
     "evaluable_start": "2009-10-08",
     "warmup_end": {
       "COMMOD": "2007-08-16",
-      "EM_EQ": "2004-01-28",
+      "EM_EQ": "2008-10-13",
       "EUROPE_EQ": "2008-10-10",
       "EUR_IG": "2008-10-13",
       "EZ_GOV": "2008-10-10",
       "GLOBAL_RE": "2009-10-08",
       "GOLD": "2005-09-02",
-      "JAPAN_EQ": "1996-12-30",
+      "JAPAN_EQ": "2008-10-10",
       "PACXJ_EQ": "2002-08-13",
       "US_EQ": "1993-11-11",
       "US_TSY": "2003-05-14"

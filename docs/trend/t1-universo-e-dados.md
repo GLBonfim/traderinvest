@@ -20,9 +20,9 @@ Data: 14/11/2026 · Ramo: `feature/multi-asset-trend` · Desenho: v2 (ADR-0040)
 - Manifesto congelado: `app/trend/registry/manifest.json`, hash original
   `93d4e4097b534405c1e0940807c59d8d06cbee46a24d118f2b3ff01400474055`. Uma segunda tentativa de
   congelar é recusada, e o comando `verify` recalcula o hash de todos os arquivos.
-- Depois das suas decisões, o manifesto foi **emendado**, não refeito. O novo hash é
-  `5f50f2aec2622ecb0323538268c83266f8c620c38fe322a6167b7e72bb6e82cc`. Veja a seção "Decisões
-  do dono".
+- Depois das suas decisões, o manifesto foi **emendado** duas vezes, sem ser refeito. O hash
+  atual é `7276157c672c6465bc5cdecbd480c01b09326c6eec6a87a785a8d92e51886f85`. Veja as seções
+  "Decisões do dono" e "Segunda ronda".
 
 ## O universo e por que cada ativo está lá
 
@@ -34,9 +34,9 @@ número de linhas de cada série.
 |---|---|---|---|---|
 | US_EQ | Ações dos EUA | Maior mercado do mundo; motor próprio (lucros dos EUA, dólar) | SXR8 · IE00B5BMR087 | 0,07% |
 | EUROPE_EQ | Ações europeias | Região do investidor; mistura de setores diferente dos EUA | EXSA · DE0002635307 | 0,20% |
-| JAPAN_EQ | Ações do Japão | Economia, banco central e moeda (iene) próprios | EUNN · IE00B4L5YX21 | 0,12% |
+| JAPAN_EQ | Ações do Japão | Economia, banco central e moeda (iene) próprios | IQQJ · IE00B02KXH56 (antes EUNN) | 0,12% |
 | PACXJ_EQ | Pacífico sem Japão | Austrália, Hong Kong, Singapura: ligados a matérias-primas e à China | SXR1 · IE00B52MJY50 | 0,20% |
-| EM_EQ | Mercados emergentes | Crescimento, política e moedas diferentes dos desenvolvidos | IS3N · IE00BKM4GZ66 | 0,18% |
+| EM_EQ | Mercados emergentes | Crescimento, política e moedas diferentes dos desenvolvidos | IQQE · IE00B0M63177 (antes IS3N) | 0,18% |
 | EZ_GOV | Dívida pública da zona euro | Ativo defensivo principal em euros, sem risco cambial | XGLE · LU0290355717 | 0,07% |
 | US_TSY | Títulos do Tesouro dos EUA, 7 a 10 anos | Ciclo de juros do Fed e dólar; costuma proteger em crises de ações | IUSM · IE00B1FZS798 | 0,07% |
 | EUR_IG | Dívida de empresas em euros (grau de investimento) | Risco de crédito, diferente do risco de juros | IBCS · IE0032523478 | 0,09% |
@@ -55,12 +55,12 @@ Observações:
 ### Que série de preços se usa para cada ativo (regra mecânica)
 
 Quando o histórico do próprio produto europeu começa até 31/12/2008, usa-se esse histórico.
-Caso contrário, usa-se o ETF americano que segue o mesmo índice. Pela sua decisão de
+Caso contrário, usa-se o ETF ou ETN americano que segue o mesmo índice. Pela sua decisão de
 14/11/2026, se ele não existir, o ativo sai da lista; nunca se usa um índice parecido.
 
 | Usam a série do próprio produto (em EUR) | Usam um substituto americano (em USD, convertido para EUR) |
 |---|---|
-| EXSA, XGLE, IBCS, IQQ6 | SPY, EWJ, EPP, EEM, IEF, GLD, DJP |
+| EXSA, IQQJ, IQQE, XGLE, IBCS, IQQ6 | SPY, EPP, IEF, GLD, DJP |
 
 O ativo que define o início do período é o imobiliário (IQQ6): a série dele começa em 23/12/2008
 e precisa de 200 sessões de aquecimento. Por isso, o primeiro dia avaliável é 08/10/2009.
@@ -203,23 +203,47 @@ Um terceiro ponto para decidir:
   europeu (SXRS). Os ETF americanos deste índice só existem desde 2017–2018. Se "ETF americano"
   for para ler à letra, as matérias-primas saem e ficam 10 ativos.
 
-## O que preciso de você
+## Segunda ronda de decisões (14/11/2026): lista aprovada
 
-1. **JAPAN_EQ e EM_EQ:** trocar para IQQJ e IQQE (a minha recomendação), ou excluir os dois?
-   Excluir deixa a lista abaixo do mínimo.
-2. **COMMOD:** aceitar o DJP (um ETN) como histórico do mesmo índice, ou excluir as
-   matérias-primas?
-3. **O resto da lista:** aprovar.
+1. **Japão e emergentes:** passam para IQQJ e IQQE, ambos na classe de custo B. A classe foi
+   registada e gravada num commit (`baf8529`) **antes** de descarregar os dados.
+2. **Matérias-primas:** o DJP fica. A regra passa a dizer "ETF ou ETN americano cotado que
+   segue o mesmo índice". As limitações dizem agora que o preço de mercado de um ETN pode
+   afastar-se do valor do índice.
+3. **Os outros 8 ativos:** aprovados sem mudança.
+
+**Dados e auditoria dos dois produtos novos.** Os dois arquivos novos foram acrescentados ao
+mesmo snapshot; nenhum arquivo antigo foi tocado. Depois, a auditoria correu de novo:
+
+| Verificação | IQQJ (Japão) | IQQE (emergentes) |
+|---|---|---|
+| Período | 02/01/2008 a 13/11/2026 | 02/01/2008 a 13/11/2026 |
+| Duplicados, preços em falta ou inválidos | Nenhum | Nenhum |
+| Ajuste de dividendos confere | Sim (diferença ≤ 0,0001%) | Sim (diferença ≤ 0,0001%) |
+| Diferenças face ao calendário da Xetra | 7 em falta, 5 a mais | 6 em falta, 5 a mais |
+| Saltos diários acima de 15% | Nenhum | Nenhum |
+| Preço parado | No máximo 4 dias | No máximo 4 dias |
+
+- **Resultado:** **PASS**. A janela avaliável e a divisão 60/20/20 ficaram **exatamente
+  iguais**, e o calendário mestre ganhou um dia (8632 sessões).
+- **Manifesto:** emendado de `5f50f2ae…` para `7276157c…`. Os arquivos da EWJ e da EEM saíram
+  da lista, e todos os outros arquivos ficaram idênticos byte a byte.
+- **Volume zero:** quase todo em 2008, como nas outras séries europeias. Mas o IQQJ teve 18
+  dias sem volume em 2026, de 220. O preço mudou em todos esses dias (é o criador de mercado
+  que o atualiza), e o volume mediano em 2026 é de cerca de 17 000 unidades por dia. A classe B
+  que fixou fica como está; a fase demo vai medir o spread real deste produto.
 
 ## Arquivos desta fase
 
 - `app/trend/registry/universe.json`: o universo pré-registrado.
 - `app/trend/registry/audit.json`: o relatório completo da auditoria.
 - `app/trend/registry/manifest.json`: o manifesto congelado.
-- `app/trend/{universe,sources,loaders,audit,manifest,cli}.py`: o código; 22 testes em
+- `app/trend/{universe,sources,loaders,audit,manifest,cli}.py`: o código; 28 testes em
   `tests/unit/trend/`.
 - Comandos:
-  - `uv run python -m app.trend.cli verify` confere os hashes e lista as violações da condição
-    (a). Hoje termina com erro de propósito, por causa de JAPAN_EQ e EM_EQ.
-  - `fetch` e `audit` servem para reproduzir os dados.
-  - `amend` regista mudanças de regras antes de qualquer resultado.
+  - `uv run python -m app.trend.cli verify` confere os hashes e a condição (a). Hoje termina
+    sem erro.
+  - `fetch` (com `--add-missing` para juntar séries novas) e `audit` servem para reproduzir os
+    dados.
+  - `amend` (com `--reaudit-snapshot` quando há arquivos novos) regista mudanças antes de
+    qualquer resultado.

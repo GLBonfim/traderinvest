@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from app.core.integrity import atomic_write, canonical_json
 from app.trend.manifest import (
     DATA_FIELDS,
@@ -9,9 +11,10 @@ from app.trend.manifest import (
     amend_manifest,
     cost_table,
     manifest_sha256,
+    reaudit_amendment,
     verify_manifest,
 )
-from app.trend.sources import sha256_file
+from app.trend.sources import FileRecord, needed_roles, sha256_file
 from app.trend.universe import load_universe
 
 
@@ -96,3 +99,44 @@ def test_cost_table_lists_every_series_tier() -> None:
     assert table["asset_tiers"]["US_EQ"]["ter_proxy_pct"] == 0.0945
     assert table["asset_tiers"]["EUROPE_EQ"]["ter_proxy_pct"] is None
     assert table["commission"]["confirmed_by_owner_on"] == "2026-11-14"
+
+
+def _rec(role: str, sha: str) -> FileRecord:
+    return FileRecord(role, f"snap/{role}.csv", sha, 1, "2026-11-14T00:00:00+00:00", "test")
+
+
+def test_reaudit_amendment_adds_drops_and_protects_kept_files() -> None:
+    u = load_universe()
+    roles = needed_roles(u)
+    old_files = [_rec(r, "1" * 64).to_dict() for r in roles[2:]] + [
+        _rec("price:OLD", "2" * 64).to_dict()
+    ]
+    previous = {
+        "schema": SCHEMA,
+        "data_end": "2026-11-13",
+        "files": old_files,
+        "window": {"evaluable_start": "2009-10-08"},
+        "partitions": {"p": 1},
+        "parameters": {"sma_sessions": 200},
+    }
+    report = {
+        "verdict": "PASS",
+        "data_end": "2026-11-13",
+        "window": {"evaluable_start": "2009-10-08", "x": 1},
+        "partitions": {"p": 1},
+    }
+    records = [_rec(r, "1" * 64) for r in roles]
+    new = reaudit_amendment(previous, u, records, report, "2026-11-14", "swap")
+    entry = new["amendments"][-1]
+    assert entry["files_added"] == sorted(roles[:2])
+    assert entry["files_dropped"] == ["price:OLD"]
+    assert entry["changed_fields"] == ["window", "audit_sha256"]
+    assert {f["role"] for f in new["files"]} == set(roles)
+
+    tampered = [_rec(roles[-1], "f" * 64), *[_rec(r, "1" * 64) for r in roles[:-1]]]
+    with pytest.raises(ValueError, match="changed its hash"):
+        reaudit_amendment(previous, u, tampered, report, "2026-11-14", "swap")
+    with pytest.raises(ValueError, match="data end"):
+        reaudit_amendment(previous, u, records, report | {"data_end": "2026-11-20"}, "d", "r")
+    with pytest.raises(ValueError, match="did not pass"):
+        reaudit_amendment(previous, u, records, report | {"verdict": "FAIL"}, "d", "r")

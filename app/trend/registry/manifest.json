@@ -5,9 +5,26 @@
       "date": "2026-11-14",
       "previous_sha256": "93d4e4097b534405c1e0940807c59d8d06cbee46a24d118f2b3ff01400474055",
       "reason": "Owner decisions on T1 (2026-11-14), before any result: IBKR Pro Fixed commission confirmed against the IBKR Ireland price list; spread/slippage estimates approved and per-asset tiers recorded; 60/40 with annual rebalance, start in cash, same costs; series rule conditions (a) same index or exclude, (b) only values known at D(T), (c) TER difference adjustment for US ETF proxies; index labels harmonised for GOLD and COMMOD. Data, window and partitions unchanged. Asset list pending owner review."
+    },
+    {
+      "changed_fields": [
+        "window",
+        "audit_sha256"
+      ],
+      "date": "2026-11-14",
+      "files_added": [
+        "price:IQQE.DE",
+        "price:IQQJ.DE"
+      ],
+      "files_dropped": [
+        "price:EEM",
+        "price:EWJ"
+      ],
+      "previous_sha256": "5f50f2aec2622ecb0323538268c83266f8c620c38fe322a6167b7e72bb6e82cc",
+      "reason": "Owner decisions 2026-11-14 (second round), before any result: JAPAN_EQ -> IQQJ (MSCI Japan) and EM_EQ -> IQQE (MSCI Emerging Markets), own EUR Xetra series, cost class B fixed before download (commit baf8529); EWJ and EEM files dropped; series rule admits a US-listed ETF or ETN on the same index (DJP kept); ETN price/index gap declared. Asset list approved by the owner."
     }
   ],
-  "audit_sha256": "15981bc794877bcd98ff70080d27bf0f60cab3952ab61fe1371aa03574062aa4",
+  "audit_sha256": "696255374d90f8905f46ac4e9806f667bdbd25bbf5741dbd4ce2562484ae7df5",
   "audit_verdict": "PASS",
   "costs": {
     "asset_tiers": {
@@ -21,13 +38,13 @@
         "ter_proxy_pct": 0.75
       },
       "EM_EQ": {
-        "cost_class": "A",
-        "half_spread_pct": 0.03,
-        "isin": "IE00BKM4GZ66",
-        "product": "IS3N",
-        "slippage_pct": 0.02,
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "IE00B0M63177",
+        "product": "IQQE",
+        "slippage_pct": 0.03,
         "ter_eu_pct": 0.18,
-        "ter_proxy_pct": 0.7
+        "ter_proxy_pct": null
       },
       "EUROPE_EQ": {
         "cost_class": "A",
@@ -86,11 +103,11 @@
       "JAPAN_EQ": {
         "cost_class": "B",
         "half_spread_pct": 0.05,
-        "isin": "IE00B4L5YX21",
-        "product": "EUNN",
+        "isin": "IE00B02KXH56",
+        "product": "IQQJ",
         "slippage_pct": 0.03,
         "ter_eu_pct": 0.12,
-        "ter_proxy_pct": 0.49
+        "ter_proxy_pct": null
       },
       "PACXJ_EQ": {
         "cost_class": "B",
@@ -168,28 +185,12 @@
       "sha256": "f727fdc3c3c01f95b385c23670b3b054741d6eac750e8137fb4328d92ee6e6be"
     },
     {
-      "bytes": 490559,
-      "origin": "yfinance 1.7.0: Ticker('EEM').history(period='max', auto_adjust=False, actions=True)",
-      "path": "2026-11-14/yahoo/EEM.csv",
-      "retrieved_at_utc": "2026-11-14T17:31:28+00:00",
-      "role": "price:EEM",
-      "sha256": "2542882898735de449bcca656333b9c92c9c1b76221cd70224a5428056344f81"
-    },
-    {
       "bytes": 508819,
       "origin": "yfinance 1.7.0: Ticker('EPP').history(period='max', auto_adjust=False, actions=True)",
       "path": "2026-11-14/yahoo/EPP.csv",
       "retrieved_at_utc": "2026-11-14T17:31:28+00:00",
       "role": "price:EPP",
       "sha256": "6ebaf84f7a9bd3384946b02b9486d909ff19ba304e104bf880303c6e0b07fbf7"
-    },
-    {
-      "bytes": 593222,
-      "origin": "yfinance 1.7.0: Ticker('EWJ').history(period='max', auto_adjust=False, actions=True)",
-      "path": "2026-11-14/yahoo/EWJ.csv",
-      "retrieved_at_utc": "2026-11-14T17:31:27+00:00",
-      "role": "price:EWJ",
-      "sha256": "80c2a704a4a033fad01944f24f84857f39feeb05ec102e05abfabb20c6675da9"
     },
     {
       "bytes": 384929,
@@ -230,6 +231,22 @@
       "retrieved_at_utc": "2026-11-14T17:31:30+00:00",
       "role": "price:IQQ6.DE",
       "sha256": "fbeda9178ea3dd36d870a92ddcfe371e619363ef2f2b614b53d08e3f41de4aa0"
+    },
+    {
+      "bytes": 382776,
+      "origin": "yfinance 1.7.0: Ticker('IQQE.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IQQE.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:05:23+00:00",
+      "role": "price:IQQE.DE",
+      "sha256": "c0775f7762f27596bcb3087645d5526e5234b6b6b7e63808984643cf70e93687"
+    },
+    {
+      "bytes": 382244,
+      "origin": "yfinance 1.7.0: Ticker('IQQJ.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IQQJ.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:05:22+00:00",
+      "role": "price:IQQJ.DE",
+      "sha256": "088f3a609ee9875e2f0a01c3fa62d7206f14ea8876ca6a756fd2d1e1c6874736"
     },
     {
       "bytes": 676690,
@@ -287,20 +304,20 @@
   },
   "schema": "trend-manifest/1",
   "snapshot": "2026-11-14",
-  "universe_sha256": "b8adbab506c1b9acb8dc32d998e69dfd6af51eecae5d76da3bf1f72fecb58edb",
+  "universe_sha256": "5a4710bc6bff8fc4c43be8f083429ba2158b08c2ddd31565d68f69945a0a5397",
   "window": {
     "binding_asset": "GLOBAL_RE",
     "data_end": "2026-11-13",
     "evaluable_start": "2009-10-08",
     "warmup_end": {
       "COMMOD": "2007-08-16",
-      "EM_EQ": "2004-01-28",
+      "EM_EQ": "2008-10-13",
       "EUROPE_EQ": "2008-10-10",
       "EUR_IG": "2008-10-13",
       "EZ_GOV": "2008-10-10",
       "GLOBAL_RE": "2009-10-08",
       "GOLD": "2005-09-02",
-      "JAPAN_EQ": "1996-12-30",
+      "JAPAN_EQ": "2008-10-10",
       "PACXJ_EQ": "2002-08-13",
       "US_EQ": "1993-11-11",
       "US_TSY": "2003-05-14"

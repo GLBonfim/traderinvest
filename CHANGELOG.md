@@ -25,6 +25,9 @@ versioning: [SemVer](https://semver.org/).
   `(TER_us − TER_eu)` adjustment rule; `series_rule_violations` enforces "same index or exclude";
   `cli amend` amends the manifest with a hash chain (data unchanged; `93d4e409…` →
   `5f50f2ae…`); `cli verify` reports rule violations, which block the replay. 27 tests.
+- Asset list approved: JAPAN_EQ → IQQJ and EM_EQ → IQQE (own EUR series, class B registered
+  before download); `cli fetch --add-missing` and `cli amend --reaudit-snapshot` add files to
+  the snapshot and re-audit under a hash chain (`5f50f2ae…` → `7276157c…`; split unchanged).
 
 ## [Unreleased] — earlier, branch `feature/alpaca-paper-validation`
 

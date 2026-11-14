@@ -15,7 +15,7 @@ import pandas as pd
 from app.core.integrity import atomic_write, canonical_json
 from app.trend import audit as qa
 from app.trend.loaders import read_ecb_csv, read_price_csv
-from app.trend.sources import FileRecord, sha256_file
+from app.trend.sources import FileRecord, needed_roles, sha256_file
 from app.trend.universe import UNIVERSE_PATH, Universe
 
 SCHEMA = "trend-manifest/1"
@@ -121,6 +121,50 @@ def amend_manifest(
     for key in DATA_FIELDS:
         if amended.get(key) != previous.get(key):
             raise ValueError(f"amendment would change data field {key!r}")
+    return amended
+
+
+def reaudit_amendment(
+    previous: dict[str, Any],
+    universe: Universe,
+    records: list[FileRecord],
+    audit_report: dict[str, Any],
+    date: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Amendment after a registry change that needs new files (before any result).
+
+    Files kept from the previous manifest must be byte-identical (same SHA-256); files the
+    universe no longer needs are dropped; new files are added. The data end and the parameters
+    may not change; the audit must pass. Changes to the window or partitions are allowed only
+    because no result exists yet, and are listed in the amendment entry.
+    """
+    if audit_report["verdict"] != "PASS":
+        raise ValueError("re-audit did not pass")
+    if audit_report["data_end"] != previous["data_end"]:
+        raise ValueError("an amendment may not move the data end")
+    by_role = {r.role: r.to_dict() for r in records}
+    roles = needed_roles(universe)
+    missing = [r for r in roles if r not in by_role]
+    if missing:
+        raise ValueError(f"snapshot lacks files for {missing}")
+    old_files = {f["role"]: f for f in previous["files"]}
+    for role in roles:
+        if role in old_files and old_files[role]["sha256"] != by_role[role]["sha256"]:
+            raise ValueError(f"kept file {role} changed its hash")
+    files = sorted((by_role[r] for r in roles), key=lambda d: str(d["role"]))
+    amended = amend_manifest(previous, universe, date, reason)
+    amended["files"] = files
+    amended["window"] = audit_report["window"]
+    amended["partitions"] = audit_report["partitions"]
+    amended["audit_verdict"] = audit_report["verdict"]
+    amended["audit_sha256"] = hashlib.sha256(canonical_json(audit_report).encode()).hexdigest()
+    entry = amended["amendments"][-1]
+    entry["files_added"] = sorted(set(roles) - set(old_files))
+    entry["files_dropped"] = sorted(set(old_files) - set(roles))
+    entry["changed_fields"] = [
+        k for k in ("window", "partitions", "audit_sha256") if amended[k] != previous.get(k)
+    ]
     return amended
 
 
