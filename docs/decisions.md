@@ -1311,3 +1311,38 @@ proxy rule admits a US-listed ETF or ETN on the same index (DJP kept, ETN price/
 declared); the asset list is approved. Design section 18. T2 (2026-11-14): unit-price
 anchors added to the manifest (`unit_anchors`, development data only); implementation choices in
 design section 19, pending owner approval.
+
+## ADR-0041 — Multi-asset trend research closed at T3 (stop condition)
+
+**Status:** accepted 2026-11-14 (owner decision). Closes the research line of ADR-0040.
+
+**Context.** Phase T3 replayed the pre-registered rule of ADR-0040 on the development
+(2009-10-08 to 2019-12-31) and validation (2020-01-02 to 2023-05-31) partitions, for three cost
+scenarios, five capitals and three benchmarks. The sealed boundary had been committed before
+the first run (`214d892`). Results, run records and their SHA-256 are in commit `9a176c4`
+(`docs/trend/t3-desenvolvimento-validacao.md`, `docs/trend/t3/`).
+
+**Findings.**
+- **Stop condition of design section 8.3 (owner decision 3 at T0).** No capital of the grid
+  has a pooled development + validation annual trading cost below 0.50 % of capital:
+  500 EUR 18.43 %, 2 000 EUR 13.46 %, 5 000 EUR 7.56 %, 10 000 EUR 3.93 %, 25 000 EUR 1.84 %.
+  The orders are mostly SMA200 entries and exits (about 110 to 130 per year at 25 000 EUR). Each
+  order is about 1 250 to 1 600 EUR and pays the EUR 3 minimum commission. So there is no
+  reference capital, and the six gates cannot be evaluated as pre-registered.
+- **Net return below the benchmarks.** With realistic costs, the strategy's annual return is
+  below both the equal-weight and the global 60/40 benchmarks at every capital, in both
+  partitions. At 25 000 EUR: development 1.05 % against 6.29 % and 8.85 %; validation −0.82 %
+  against 1.75 % and 2.49 %.
+
+**Decision.** The multi-asset trend research is closed.
+- No T4. The sealed test (2023-06-01 to 2026-11-13) stays closed and unclaimed; no sealed row
+  was read.
+- No variant of the strategy is created (ADR-0040).
+- The code (`app/trend`), the registry, the manifest chain and the reports stay in the
+  repository as an archive. Nothing is deleted.
+- No strategy of this repository is approved for use. Real-money execution stays blocked
+  (ADR-0006).
+
+**Consequences.** Any future trading research needs a new design with its own pre-registration
+and owner approval. It may not reuse this sealed period as untouched evidence once its data
+have informed the new design.

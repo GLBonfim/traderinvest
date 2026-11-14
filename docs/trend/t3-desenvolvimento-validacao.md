@@ -55,6 +55,11 @@ Confirmei que é o comportamento real da regra pré-registada, e não um erro do
 O registo de todas as ordens, com o motivo, o estado, a volatilidade, os pesos e os custos,
 está em `data/trend/results/t3/trades_<período>_<capital>.csv` (fora do git).
 
+> **Nota de 14/11/2026, acrescentada depois do commit `9a176c4`:** a frase acima ficou
+> desatualizada. Os originais continuam em `data/trend/results/t3/` (fora do git), mas cópias
+> idênticas byte a byte estão agora no git, em `docs/trend/t3/`, com os hashes em
+> `docs/trend/t3/SHA256SUMS`.
+
 ## Resultados completos, só para informação
 
 A regra de paragem já decide. Estes números não mudam isso nem servem para escolher nada. Mostro
@@ -116,6 +121,9 @@ estratégia cumpre:
   de linha LF). O hash dessas alterações está no próprio resultado: `4253c105…`.
 - **Resultados:** `data/trend/results/t3/results.json` (fora do git) e o resumo
   `docs/trend/t3/summary.json`. Cada simulação tem o seu hash de reprodução.
+  > **Nota de 14/11/2026, acrescentada depois do commit `9a176c4`:** uma cópia idêntica do
+  > `results.json` está agora no git, em `docs/trend/t3/results.json`, com o hash em
+  > `docs/trend/t3/SHA256SUMS`.
 - **Avisos de dados:** nenhum ativo ficou sem volatilidade utilizável em nenhuma simulação.
 
 ## O que acontece agora
@@ -127,3 +135,9 @@ Pelas regras fixadas antes de qualquer resultado:
 - **Variantes:** o protocolo proíbe criar variantes para salvar o resultado.
 - **A decisão seguinte é sua.** Pode encerrar esta linha de investigação, ou abrir um desenho
   novo do zero, com o seu próprio registo prévio.
+
+
+## Encerramento (decisão do dono, 14/11/2026)
+
+O dono decidiu **encerrar esta linha de investigação** depois de rever este relatório. O teste
+selado fica fechado e não reivindicado, e não se cria nenhuma variante. Registo: ADR-0041.

@@ -5,6 +5,17 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased] — branch `feature/multi-asset-trend`
 
+### Closed (multi-asset trend research, 2026-11-14, ADR-0041)
+- Owner decision: the research line is closed after T3. Reasons:
+  - the stop condition of design section 8.3 was reached: the annual trading cost is above
+    0.50 % of capital at every capital of the grid (25 000 EUR: 1.84 %; 500 EUR: 18.43 %);
+  - with realistic costs, the net return is below the equal-weight and 60/40 benchmarks at
+    every capital, in both the development and validation periods.
+- The sealed test stays closed and unclaimed. No variant was created. Nothing was deleted.
+  Real-money execution stays blocked (ADR-0006).
+- Dated notes added to `docs/trend/t3-desenvolvimento-validacao.md` (original text kept); the
+  README states the project status.
+
 ### Added (multi-asset trend v2, 2026-11-14)
 - Design v2 for one fixed, slow multi-asset trend strategy
   (`docs/superpowers/specs/2026-11-14-multi-asset-trend-v2-design.md`, with the 2026-11-04 v1
