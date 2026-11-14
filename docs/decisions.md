@@ -1308,4 +1308,6 @@ return is adjusted by the TER difference `(TER_us − TER_eu)`. The manifest is 
 hash chain (data, window and split unchanged). Second round: Japan and emerging markets move to
 the non-IMI products IQQJ and IQQE (own EUR series, cost class B fixed before download); the
 proxy rule admits a US-listed ETF or ETN on the same index (DJP kept, ETN price/index gap
-declared); the asset list is approved. Design section 18.
+declared); the asset list is approved. Design section 18. T2 (2026-11-14): unit-price
+anchors added to the manifest (`unit_anchors`, development data only); implementation choices in
+design section 19, pending owner approval.

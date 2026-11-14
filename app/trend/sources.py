@@ -83,7 +83,7 @@ def yahoo_frame_to_csv(frame: pd.DataFrame) -> str:
     return str(out.to_csv(lineterminator="\n", float_format="%.10g"))
 
 
-def fetch_yahoo(symbol: str, root: Path, snapshot: str) -> FileRecord:
+def fetch_yahoo(symbol: str, root: Path, snapshot: str, kind: str = "price") -> FileRecord:
     import yfinance as yf
 
     path = root / snapshot / "yahoo" / f"{symbol}.csv"
@@ -97,7 +97,7 @@ def fetch_yahoo(symbol: str, root: Path, snapshot: str) -> FileRecord:
         f"yfinance {yf.__version__}: Ticker({symbol!r}).history(period='max', "
         "auto_adjust=False, actions=True)"
     )
-    return _record(root, path, f"price:{symbol}", origin, when)
+    return _record(root, path, f"{kind}:{symbol}", origin, when)
 
 
 def ecb_url(flow: str, key: str) -> str:
@@ -125,24 +125,32 @@ def fetch_ecb(flow: str, key: str, role: str, root: Path, snapshot: str) -> File
     return _record(root, path, role, url, when)
 
 
+def anchor_symbols(universe: Universe) -> list[str]:
+    """Xetra lines of the executable products of proxy assets (unit-price anchors only)."""
+    return [f"{a.product.ticker}.DE" for a in universe.all_series() if a.research.kind == "proxy"]
+
+
 def needed_roles(universe: Universe) -> list[str]:
     """Every file role the universe needs, in a fixed order."""
     roles = [f"price:{a.research.symbol}" for a in universe.all_series()]
-    return [*roles, "fx:USD", "rate:eonia", "rate:estr"]
+    anchors = [f"anchor:{s}" for s in anchor_symbols(universe)]
+    return [*roles, *anchors, "fx:USD", "rate:eonia", "rate:estr"]
 
 
 def fetch_missing(
     universe: Universe, root: Path, snapshot: str, existing: list[FileRecord]
 ) -> list[FileRecord]:
-    """Download only the price series the universe needs and the snapshot lacks.
+    """Download only the price and anchor series the universe needs and the snapshot lacks.
 
     Existing files are never touched (`fetch_yahoo` refuses to overwrite).
     """
     have = {r.role for r in existing}
+    wanted = [("price", a.research.symbol) for a in universe.all_series()]
+    wanted += [("anchor", s) for s in anchor_symbols(universe)]
     return [
-        fetch_yahoo(a.research.symbol, root, snapshot)
-        for a in universe.all_series()
-        if f"price:{a.research.symbol}" not in have
+        fetch_yahoo(symbol, root, snapshot, kind)
+        for kind, symbol in wanted
+        if f"{kind}:{symbol}" not in have
     ]
 
 
@@ -152,6 +160,7 @@ def fetch_all(universe: Universe, root: Path, snapshot: str) -> list[FileRecord]
     if target.exists() and any(target.iterdir()):
         raise FileExistsError(f"snapshot {target} already holds files; choose a new snapshot id")
     records = [fetch_yahoo(a.research.symbol, root, snapshot) for a in universe.all_series()]
+    records += [fetch_yahoo(s, root, snapshot, "anchor") for s in anchor_symbols(universe)]
     fx = universe.raw["eur_conversion"]
     records.append(fetch_ecb(fx["flow"], fx["key"], "fx:USD", root, snapshot))
     cash = universe.raw["cash_rate"]

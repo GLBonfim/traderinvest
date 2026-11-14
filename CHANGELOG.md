@@ -28,6 +28,19 @@ versioning: [SemVer](https://semver.org/).
 - Asset list approved: JAPAN_EQ → IQQJ and EM_EQ → IQQE (own EUR series, class B registered
   before download); `cli fetch --add-missing` and `cli amend --reaudit-snapshot` add files to
   the snapshot and re-audit under a hash chain (`5f50f2ae…` → `7276157c…`; split unchanged).
+- Phase T2 (`app/trend`): `signal.py` (SMA200 state), `allocator.py` (60-session volatility,
+  vol-capped 1/N weights, state-change and 25 % drift rule, whole units), `costs.py` (IBKR Fixed
+  commission, spread and slippage by class, TER table of section 8.2), `data.py` (EUR total-
+  return unit prices per scenario, ECB conversion failing closed on stale rates, EONIA/€STR
+  cash, scheduled period ends, unit anchors), `simulator.py` (causal replay, fill at the next
+  close, sells before buys, cash never negative, daily accounting identities), `strategy.py`,
+  `benchmarks.py` (equal weight monthly, 60/40 yearly, EUR cash), `metrics.py` (metrics, seeded
+  block bootstrap, six gates, verdict), `guard.py` (sealed boundary and one permanent claim),
+  `runner.py`. Manifest amended with unit anchors (`7276157c…` → `d945583a…`). 68 tests,
+  including a hand-calculated accounting case, causality under mutated/deleted/appended future
+  data and byte-identical reproduction. The strategy was not run on real data (loading and
+  anchor checks only; see `docs/trend/t2-motor.md`). Choices of design section 19 and the
+  anchor amendment are proposals pending owner review.
 
 ## [Unreleased] — branch `feature/fx-desktop-platform`
 

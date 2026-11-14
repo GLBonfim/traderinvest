@@ -22,6 +22,21 @@
       ],
       "previous_sha256": "5f50f2aec2622ecb0323538268c83266f8c620c38fe322a6167b7e72bb6e82cc",
       "reason": "Owner decisions 2026-11-14 (second round), before any result: JAPAN_EQ -> IQQJ (MSCI Japan) and EM_EQ -> IQQE (MSCI Emerging Markets), own EUR Xetra series, cost class B fixed before download (commit baf8529); EWJ and EEM files dropped; series rule admits a US-listed ETF or ETN on the same index (DJP kept); ETN price/index gap declared. Asset list approved by the owner."
+    },
+    {
+      "changed_fields": [],
+      "date": "2026-11-14",
+      "files_added": [
+        "anchor:8PSG.DE",
+        "anchor:IUSM.DE",
+        "anchor:IUSQ.DE",
+        "anchor:SXR1.DE",
+        "anchor:SXR8.DE",
+        "anchor:SXRS.DE"
+      ],
+      "files_dropped": [],
+      "previous_sha256": "7276157c672c6465bc5cdecbd480c01b09326c6eec6a87a785a8d92e51886f85",
+      "reason": "T2 (design 6.4), before any result: Xetra series of the six proxy assets' executable products added as unit-price anchors only (anchor:SXR8.DE, SXR1.DE, IUSM.DE, 8PSG.DE, SXRS.DE, IUSQ.DE); unit_anchors records, per asset, the anchor date (first product close on or after the evaluable start; own series: last session on or before it), the product's EUR close and the unit_scale constant, all from development-partition data."
     }
   ],
   "audit_sha256": "696255374d90f8905f46ac4e9806f667bdbd25bbf5741dbd4ce2562484ae7df5",
@@ -160,6 +175,54 @@
   },
   "design": "docs/superpowers/specs/2026-11-14-multi-asset-trend-v2-design.md",
   "files": [
+    {
+      "bytes": 341858,
+      "origin": "yfinance 1.7.0: Ticker('8PSG.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/8PSG.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:19:26+00:00",
+      "role": "anchor:8PSG.DE",
+      "sha256": "7aebaef1b78afb7ac72d97f0aac1fec6574462285bd5a87c21c610828a9afbec"
+    },
+    {
+      "bytes": 353399,
+      "origin": "yfinance 1.7.0: Ticker('IUSM.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IUSM.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:19:26+00:00",
+      "role": "anchor:IUSM.DE",
+      "sha256": "76edee019fd4c8e39532ae253d0a90e9ac6720783d9a539b184935cdf5e0f5e3"
+    },
+    {
+      "bytes": 301437,
+      "origin": "yfinance 1.7.0: Ticker('IUSQ.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IUSQ.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:19:27+00:00",
+      "role": "anchor:IUSQ.DE",
+      "sha256": "c2c2a669428ec2a71c9f3f839b38392914152ea5981a059b1d22fdcd6b437eba"
+    },
+    {
+      "bytes": 325175,
+      "origin": "yfinance 1.7.0: Ticker('SXR1.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/SXR1.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:19:25+00:00",
+      "role": "anchor:SXR1.DE",
+      "sha256": "0a6e069a50e14ba032b4a52226d7d1659c7e5911fd0da9c19138b6d6268cd113"
+    },
+    {
+      "bytes": 327720,
+      "origin": "yfinance 1.7.0: Ticker('SXR8.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/SXR8.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:19:24+00:00",
+      "role": "anchor:SXR8.DE",
+      "sha256": "bd671251fd68a2bc1444b4dc29e310891cbfa07b90ebff38a2e17af86baf9f12"
+    },
+    {
+      "bytes": 173658,
+      "origin": "yfinance 1.7.0: Ticker('SXRS.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/SXRS.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:19:27+00:00",
+      "role": "anchor:SXRS.DE",
+      "sha256": "4753aba226acc8dd1f38529ee17309f453c12f66577de88891ab6a0fc8a81c60"
+    },
     {
       "bytes": 1491483,
       "origin": "https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A?format=csvdata",
@@ -304,6 +367,80 @@
   },
   "schema": "trend-manifest/1",
   "snapshot": "2026-11-14",
+  "unit_anchors": {
+    "COMMOD": {
+      "close_eur": 4.526500225,
+      "date": "2018-05-03",
+      "symbol": "SXRS.DE",
+      "unit_scale": 5.5039406859055875
+    },
+    "EM_EQ": {
+      "close_eur": 24.98999977,
+      "date": "2009-10-08",
+      "symbol": "IQQE.DE",
+      "unit_scale": 24.98999977
+    },
+    "EUROPE_EQ": {
+      "close_eur": 24.64999962,
+      "date": "2009-10-08",
+      "symbol": "EXSA.DE",
+      "unit_scale": 24.64999962
+    },
+    "EUR_IG": {
+      "close_eur": 120.0999985,
+      "date": "2009-10-08",
+      "symbol": "IBCS.DE",
+      "unit_scale": 120.0999985
+    },
+    "EZ_GOV": {
+      "close_eur": 165.7700043,
+      "date": "2009-10-08",
+      "symbol": "XGLE.DE",
+      "unit_scale": 165.7700043
+    },
+    "GLOBAL_EQ": {
+      "close_eur": 21.37000084,
+      "date": "2011-10-21",
+      "symbol": "IUSQ.DE",
+      "unit_scale": 18.438247418870176
+    },
+    "GLOBAL_RE": {
+      "close_eur": 10.89999962,
+      "date": "2009-10-08",
+      "symbol": "IQQ6.DE",
+      "unit_scale": 10.89999962
+    },
+    "GOLD": {
+      "close_eur": 104.4119034,
+      "date": "2009-10-08",
+      "symbol": "8PSG.DE",
+      "unit_scale": 104.4119034
+    },
+    "JAPAN_EQ": {
+      "close_eur": 6.739999771,
+      "date": "2009-10-08",
+      "symbol": "IQQJ.DE",
+      "unit_scale": 6.739999771
+    },
+    "PACXJ_EQ": {
+      "close_eur": 91.58000183,
+      "date": "2010-05-04",
+      "symbol": "SXR1.DE",
+      "unit_scale": 81.40122114415372
+    },
+    "US_EQ": {
+      "close_eur": 92.66999817,
+      "date": "2010-05-19",
+      "symbol": "SXR8.DE",
+      "unit_scale": 72.76843602295706
+    },
+    "US_TSY": {
+      "close_eur": 116.8700027,
+      "date": "2009-10-08",
+      "symbol": "IUSM.DE",
+      "unit_scale": 116.8700027
+    }
+  },
   "universe_sha256": "5a4710bc6bff8fc4c43be8f083429ba2158b08c2ddd31565d68f69945a0a5397",
   "window": {
     "binding_asset": "GLOBAL_RE",

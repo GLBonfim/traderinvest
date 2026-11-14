@@ -102,8 +102,8 @@ def test_partitions_cut_at_month_ends_and_do_not_overlap() -> None:
     assert pd.Timestamp(p["sealed"]["start"]) == master[master > val_end][0]
     n = len(master)
     # A month-end cut lands at most one month (< 24 sessions) before the exact fraction.
-    assert master.get_loc(dev_end) < 0.60 * n <= master.get_loc(dev_end) + 24
-    assert master.get_loc(val_end) < 0.80 * n <= master.get_loc(val_end) + 24
+    assert int(master.searchsorted(dev_end)) < 0.60 * n <= int(master.searchsorted(dev_end)) + 24
+    assert int(master.searchsorted(val_end)) < 0.80 * n <= int(master.searchsorted(val_end)) + 24
 
 
 def test_yahoo_csv_uses_local_session_dates() -> None:

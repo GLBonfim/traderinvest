@@ -110,6 +110,9 @@ def main(argv: list[str] | None = None) -> int:
                 print("audit FAILED:\n  " + "\n  ".join(report["failures"]), file=sys.stderr)
                 return 1
             amended = reaudit_amendment(manifest, universe, records, report, args.date, args.reason)
+            from app.trend.data import unit_anchors
+
+            amended["unit_anchors"] = unit_anchors(amended, universe, root)
             write_json(AUDIT_PATH, report)
         else:
             amended = amend_manifest(manifest, universe, args.date, args.reason)

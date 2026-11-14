@@ -396,7 +396,7 @@ app/trend/
   signal.py      # pure: SMA200 state
   allocator.py   # pure: vol, target weights, drift rule
   costs.py       # pure: commission/spread/slippage/TER per scenario
-  simulator.py   # causal replay, fills at next open, cash, accounting
+  simulator.py   # causal replay, fills at next close (section 6.4), cash, accounting
   benchmarks.py  # equal weight, 60/40, cash
   metrics.py     # metrics + bootstrap via app.validation.resampling
   sealed.py      # boundary + one-time claim (holdout_guard pattern)
@@ -495,5 +495,43 @@ hash of each replaced manifest:
 - `5f50f2ae…` → `7276157c…`: product swap. IQQJ and IQQE files added, EWJ and EEM files dropped;
   every kept file byte-identical; data end unchanged; audit PASS; evaluable start, length and
   60/20/20 boundaries unchanged (only the per-asset warm-up dates in `window` changed).
+- `7276157c…` → `d945583a…` (T2, section 19, **proposal pending owner review**): unit-price
+  anchors. The Xetra series of the six
+  proxy assets' products were added as anchor files only, and `unit_anchors` was recorded. No
+  file changed; window and split unchanged.
 
 Amendments are allowed only before the first result.
+
+## 19. T2 implementation choices (2026-11-14, before any result; pending owner approval)
+
+These make sections 6 to 12 executable. None uses a result; all are covered by tests.
+
+1. **One set of decisions per run, from the realistic series.** States, volatility and target
+   weights come from the realistic-scenario EUR total-return series. A cost scenario changes
+   only unit prices (its TER adjustment) and trading costs. So `zero`, `realistic` and `double`
+   isolate the cost effect of the same decisions.
+2. **Unit prices (section 6.4).** `price_s(t) = unit_scale × L_s(t)`, where `L_s` is normalised
+   to 1 at the asset's last session on or before the evaluable start. `unit_scale` is a
+   manifest constant. Own series: the product's own close on that reference session. Proxies:
+   the product's first Xetra close on or after the evaluable start, divided by the proxy's
+   realistic level that day. All six anchor dates fall in the development partition
+   (2009-10-08 to 2018-05-03), so no validation or sealed data enters the scale.
+3. **Loaded history.** Every run loads each asset from 201 own sessions before the evaluable
+   start up to the run's end; the windows are backward-looking, so values do not depend on
+   that start.
+4. **Rebalance days of the benchmarks.** "Last master-calendar day of the month (year)" is
+   decided with the published exchange calendars (XNYS ∪ XETR, known in advance): `T` is the
+   period end if no scheduled session follows it in the period. If that day is missing from
+   the master calendar, the first master day of the next period takes the rebalance (decided
+   from the past only).
+5. **Fills.** On each day, sells fill before buys, each in asset-id order. A buy is cut to the
+   whole units the cash pays for, after costs. The cut remainder is dropped, not carried. A buy
+   that cannot pay for one unit is dropped and logged.
+6. **Fail-closed asset.** Unusable volatility (undefined, zero, or a stale window with more
+   than 5 consecutive zero returns among the last 60) means no trade for that asset that day.
+   The run is flagged, and the asset's last state is not updated.
+7. **Annualisation.** Sharpe uses `(sessions − 1) / years` periods per year, with
+   `years = calendar days / 365.25`. The EUR-cash return of each day uses the previous day's
+   rate (ACT/360), as in section 6.5.
+8. **Sealed guard files** live in `data/trend/guard/` (outside Git). The boundary is created
+   before the first development run in T3, and the claim receipt is committed in the T4 report.
