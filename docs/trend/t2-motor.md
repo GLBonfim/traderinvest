@@ -159,6 +159,15 @@ Registo-os para ficar completo:
 pendente da sua revisão. Se a rejeitar, uma nova emenda desfaz a mudança, e a cadeia de hashes
 guarda as duas.
 
+## Testes do projeto inteiro depois do merge (registro pedido pelo dono)
+
+- **Execução completa** de `tests/unit`, sem os testes da tendência, no ramo: 2441 passaram, 2
+  foram saltados e 8 falharam. Os 8 estão todos em `tests/unit/fx/test_m1_foundation.py`.
+- **Comparação:** o mesmo arquivo, corrido numa cópia limpa do `origin/main`, falha nos mesmos 8
+  testes.
+- **Testes que falham no ramo e não falham no `origin/main`: nenhum. A lista está vazia.**
+- **Falha conhecida:** é anterior a este trabalho e não foi corrigida neste ramo, como pediu.
+
 ## Próximo passo (T3), depois da sua aprovação
 
 - **O que corre:** desenvolvimento e validação, nos 3 cenários de custo e nos 5 capitais, e os 3

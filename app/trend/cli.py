@@ -16,7 +16,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
+from app.trend.guard import PUBLISHED_BOUNDARY
 from app.trend.manifest import (
     AUDIT_PATH,
     MANIFEST_PATH,
@@ -29,7 +31,7 @@ from app.trend.manifest import (
     write_json,
 )
 from app.trend.sources import FileRecord, fetch_all, fetch_missing
-from app.trend.universe import load_universe, series_rule_violations
+from app.trend.universe import Universe, load_universe, series_rule_violations
 
 DATA_ROOT = Path("data/trend/raw")
 RECORDS = "records.json"
@@ -59,6 +61,9 @@ def main(argv: list[str] | None = None) -> int:
     p_amend.add_argument("--date", required=True)
     p_amend.add_argument("--reason", required=True)
     p_amend.add_argument("--reaudit-snapshot", help="re-run the audit after new files were added")
+    p_t3 = sub.add_parser("t3", help="development and validation replays (sealed test closed)")
+    p_t3.add_argument("--out", type=Path, default=Path("data/trend/results/t3"))
+    p_t3.add_argument("--report-dir", type=Path, default=Path("docs/trend/t3"))
     args = parser.parse_args(argv)
     root: Path = args.data_root
     universe = load_universe()
@@ -93,7 +98,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    if args.command == "t3":
+        return _t3(manifest, universe, root, args.out, args.report_dir)
     if args.command == "amend":
+        if PUBLISHED_BOUNDARY.exists():
+            print("refused: the sealed boundary exists, results may exist", file=sys.stderr)
+            return 2
         stale = [p for p in verify_manifest(manifest, root, universe) if "universe" not in p]
         if stale:
             print("refused: raw files do not match the manifest", file=sys.stderr)
@@ -129,6 +139,61 @@ def main(argv: list[str] | None = None) -> int:
     for v in violations:
         print(f"series rule (a) violated, blocks the replay: {v}")
     return 0 if not problems and not violations else 1
+
+
+def _code_state() -> dict[str, str]:
+    """HEAD commit and the SHA-256 of the uncommitted diff of the trend code (provenance)."""
+    import hashlib
+    import subprocess
+
+    def git(*args: str) -> str:
+        return subprocess.run(  # noqa: S603 - fixed git arguments
+            ["git", *args],  # noqa: S607 - git on PATH
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+    diff = git("diff", "HEAD", "--", "app/trend", "tests/unit/trend")
+    untracked = git("ls-files", "--others", "--exclude-standard", "app/trend", "tests/unit/trend")
+    blob = diff + "".join(
+        Path(f).read_text(encoding="utf-8") for f in sorted(untracked.split()) if f.endswith(".py")
+    )
+    return {
+        "head": git("rev-parse", "HEAD").strip(),
+        "uncommitted_sha256": hashlib.sha256(blob.encode()).hexdigest(),
+        "uncommitted_files": ",".join(sorted(untracked.split())),
+    }
+
+
+def _t3(manifest: dict[str, Any], universe: Universe, root: Path, out: Path, docs: Path) -> int:
+    import csv
+
+    from app.trend.guard import GUARD_ROOT, prepare_boundary
+    from app.trend.research import json_ready, run_t3
+
+    problems = verify_manifest(manifest, root, universe) + series_rule_violations(universe)
+    if problems:
+        print("refused: " + "; ".join(problems), file=sys.stderr)
+        return 2
+    prepare_boundary(GUARD_ROOT, manifest)  # must equal the boundary committed at T3 start
+    results = run_t3(manifest, universe, root)
+    out.mkdir(parents=True, exist_ok=True)
+    docs.mkdir(parents=True, exist_ok=True)
+    payload = json_ready(results)
+    payload["manifest_sha256"] = manifest_sha256(manifest)
+    payload["code"] = _code_state()
+    write_json(out / "results.json", payload)
+    for part in payload["partitions"]:
+        for capital, rows in part.pop("trades").items():
+            target = out / f"trades_{part['partition']}_{capital}.csv"
+            with target.open("w", encoding="utf-8", newline="") as fh:
+                writer = csv.DictWriter(fh, fieldnames=list(rows[0]) if rows else ["none"])
+                writer.writeheader()
+                writer.writerows(rows)
+    write_json(docs / "summary.json", payload)
+    print(f"T3 done; reference capital {payload['minimum_viable_capital']['reference_capital']}")
+    return 0
 
 
 if __name__ == "__main__":

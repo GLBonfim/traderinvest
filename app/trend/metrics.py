@@ -95,6 +95,7 @@ def summarise(result: RunResult, cash_rate: pd.Series, capital: float) -> dict[s
         "dropped_orders": sum(1 for t in result.trades if t["status"] != "filled"),
         "turnover_per_year": traded / avg_nav / years if years > 0 else float("nan"),
         "average_exposure": float(daily["exposure"].mean()),
+        "average_nav": avg_nav,
         "costs": {k: float(daily[k].sum()) for k in ("commission", "spread", "slippage")},
         "interest": float(daily["interest"].sum()),
         "annual_trading_cost_pct": 100 * trading_cost / avg_nav / years if years > 0 else 0.0,

@@ -43,6 +43,13 @@ versioning: [SemVer](https://semver.org/).
   choices 1–5 and 7 and the anchor amendment approved; exits never depend on volatility
   (choice 6, `test_strategy.py`); the sealed claim receipt must be committed and pushed before
   any sealed read, enforced by `guard.require_published_claim` (choice 8). 73 tests.
+- Phase T3 (`app/trend/research.py`, `cli t3`): sealed boundary committed before any run;
+  development and validation replays for 3 cost scenarios, 5 capitals, the strategy and 3
+  benchmarks. Stop condition of design section 8.3 reached: no capital of the grid has an
+  annual trading cost below 0.50 % (25 000 EUR: 1.84 %), so there is no reference capital, no
+  T4, and the sealed test stays closed and unclaimed. Owner report
+  `docs/trend/t3-desenvolvimento-validacao.md`; run records in `docs/trend/t3/` with SHA-256.
+  77 tests.
 
 ## [Unreleased] — branch `feature/fx-desktop-platform`
 

@@ -56,7 +56,7 @@ def _boundary_record(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def _write_exclusive(path: Path, payload: dict[str, Any]) -> None:
-    with path.open("x", encoding="utf-8") as stream:  # raises FileExistsError if present
+    with path.open("x", encoding="utf-8", newline="\n") as stream:  # FileExistsError if present
         json.dump(payload, stream, indent=2, sort_keys=True, allow_nan=False)
         stream.flush()
         os.fsync(stream.fileno())
