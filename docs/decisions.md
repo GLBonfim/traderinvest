@@ -509,3 +509,47 @@ acceptance; they are superseded by a new ADR.
 - **Decision:** Local repository on `main`. `.gitignore` excludes `.env`, secrets and all data
   formats; `.env.example` documents configuration. The private GitHub remote is added by the owner
   (instructions in README). CI is deferred.
+
+## ADR-0040 — Multi-asset trend research v2: one fixed rule, sealed test, offline only
+
+**Status:** accepted 2026-11-14 (T0 approved by the owner with corrections). Offline scope
+pre-approved phase by phase. Design: `docs/superpowers/specs/2026-11-14-multi-asset-trend-v2-design.md`,
+which supersedes in part the 2026-11-04 design. Numbering continues after ADR-0039, which lives on
+`feature/fx-desktop-platform` (ADR-0028 to ADR-0039 are not on `main`).
+
+**Context.** No intraday FX agent (M15, H1, M5) and no SPY timing rule passed pre-registered
+validation. The owner ended that line of research and chose to test a single slow trend strategy
+across a diversified universe, with fixed parameters and one sealed test.
+
+**Decision.**
+- Universe: 10–15 diversified exposures (equities by region, government and corporate bonds,
+  gold, broad commodities, listed real estate), each mapped to a UCITS ETF/ETC available at IBKR
+  Ireland. The list is fixed in T1, with justification, before any result.
+- Signal per asset on daily closed EUR total-return bars: `LONG` if the close is strictly above
+  its 200-session SMA, `CASH` otherwise, `INSUFFICIENT_DATA` (never trades) before 200 sessions.
+- Weight `(1/N) × min(1, 10 % / vol_60)`; no leverage, no shorts; idle cash earns
+  €STR − 0.25 p.p. Decision after the close of `T`; one execution rule for every asset: fill at
+  the close of the next session (`T+1`); open prices are never used. Trade only on a state change
+  or a relative drift above 25 %. Parameters 200, 60 and 10 % are not tuned.
+- Evidence protocol: data audit and hashed manifest first; fixed 60/20/20 chronological split;
+  each partition (strategy and benchmarks) starts in cash, with earlier data allowed only to warm
+  up the SMA and volatility; sealed test run once through a permanent claim (holdout-guard
+  pattern, re-implemented in `app/trend`); cost scenarios zero / realistic / double, with TER
+  never double counted; capital grid 500–25 000 EUR, gates evaluated at the smallest capital with
+  annual trading cost below 0.50 % (stop if none), 2 000 and 5 000 EUR reported for information;
+  benchmarks equal-weight, global 60/40 and EUR cash; six all-must-pass gates.
+- Verdict: `EDGE` if all gates pass and the one-sided 95 % block-bootstrap lower bound of the
+  Sharpe in excess of EUR cash is above zero; `INSUFFICIENT EVIDENCE` if the gates pass but the
+  bound is not, or if evaluation fails; otherwise `NO STATISTICAL EDGE FOUND`. The same bound over
+  the full history is secondary evidence only.
+- Code only in `app/trend` and `tests/unit/trend`; `app/fx`, `app/desktop`, `app/engine`,
+  `app/paper`, `app/broker`, `app/ml`, `app/candles`, `app/price_action` are frozen. Reuse only
+  `app.validation.resampling` and `app.core.integrity` (both copied byte-identical from
+  `feature/fx-desktop-platform`, since `main` predates them).
+- Free data only; if insufficient, stop and report.
+- No broker connection and no orders in this delivery. ADR-0006 stays in force.
+
+**Consequences.** The delivery ends with the sealed test. `EDGE` may proceed to a separately
+designed demo (IBKR paper) stage; `INSUFFICIENT EVIDENCE` with all gates passed may also proceed
+to demo, with any real-money decision deferred; an evaluation failure stops the work;
+`NO STATISTICAL EDGE FOUND` ends it. Creating variants to rescue a result is forbidden.
