@@ -367,3 +367,33 @@ def test_history_and_corruption(tmp_path: Path) -> None:
     path.write_text(path.read_text().replace('"COMPLETED"', '"FAILED"', 1))
     with pytest.raises(OpsStoreError, match="hash chain"):
         OpsStore(tmp_path)
+
+
+def test_mutex_timeout_is_reported_as_unknown_lock_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.operations.lock import LockMutexTimeoutError
+
+    def timeout(self: PipelineLock) -> None:
+        raise LockMutexTimeoutError({}, 10.0)
+
+    monkeypatch.setattr(PipelineLock, "acquire", timeout)
+    svc = base()
+    r = pipe(tmp_path, svc, "2024-07-02T21:00:00").run()
+    assert r.status == m.LOCKED and svc.mutating_calls() == []
+    [alert] = svc.ops_alerts
+    assert alert.event_type == "OPS_LOCK_CONFLICT" and alert.payload["reason"] == "mutex_timeout"
+    assert "could not be checked" in alert.message and "Another pipeline" not in alert.message
+
+
+def test_real_lock_conflict_message_is_unchanged(tmp_path: Path) -> None:
+    svc = base()
+    holder = PipelineLock(tmp_path)
+    holder.acquire()
+    try:
+        r = pipe(tmp_path, svc, "2024-07-02T21:00:00").run()
+    finally:
+        holder.release()
+    [alert] = svc.ops_alerts
+    assert r.status == m.LOCKED and alert.payload["reason"] == "held"
+    assert alert.message.startswith("Another pipeline instance holds the lock")

@@ -36,6 +36,15 @@ def test_api_exposes_no_trading_or_order_endpoints() -> None:
     """Phase 1 must not expose any endpoint able to move money."""
     paths: dict[str, dict[str, object]] = app.openapi()["paths"]
     routes = {(method.upper(), path) for path, ops in paths.items() for method in ops}
-    assert routes == {("GET", "/health")}
+    # Read-only market routes approved in ADR-0028; nothing else may be added without a new ADR.
+    assert routes == {
+        ("GET", "/health"),
+        ("GET", "/api/v1/market/summary"),
+        ("GET", "/api/v1/market/series"),
+        # read-only research routes approved in ADR-0029
+        ("GET", "/api/v1/research/strategies"),
+        ("GET", "/api/v1/research/backtests"),
+        ("GET", "/api/v1/research/curves"),
+    }
     forbidden = ("order", "trade", "broker", "execute", "position")
     assert not any(word in path.lower() for _, path in routes for word in forbidden)

@@ -36,7 +36,7 @@ from app.data.calendar import TradingCalendar
 from app.operations import models as m
 from app.operations import sessions as cal_
 from app.operations.config import OperationsConfig
-from app.operations.lock import LockHeldError, PipelineLock
+from app.operations.lock import LockHeldError, LockMutexTimeoutError, PipelineLock
 from app.operations.store import OpsStore
 
 
@@ -155,13 +155,25 @@ class Pipeline:
             lock.acquire()
         except LockHeldError as exc:
             self.store.bump("lock_conflicts")
+            if isinstance(exc, LockMutexTimeoutError):  # state unknown, not proof of a holder
+                message = (
+                    "The pipeline lock could not be checked within the mutex timeout; "
+                    "this run did nothing."
+                )
+            else:
+                message = "Another pipeline instance holds the lock; this run did nothing."
             self._alert(
                 "OPS_LOCK_CONFLICT",
                 ("lock", str(exc.owner.get("lock_id"))),
                 now,
                 "Operations pipeline lock conflict",
-                "Another pipeline instance holds the lock; this run did nothing.",
-                {"owner": {k: exc.owner.get(k) for k in ("host", "pid", "acquired_at", "purpose")}},
+                message,
+                {
+                    "owner": {
+                        k: exc.owner.get(k) for k in ("host", "pid", "acquired_at", "purpose")
+                    },
+                    "reason": "mutex_timeout" if isinstance(exc, LockMutexTimeoutError) else "held",
+                },
             )
             return self._result(m.LOCKED, started, mode, [], warnings=[str(exc)])
         try:

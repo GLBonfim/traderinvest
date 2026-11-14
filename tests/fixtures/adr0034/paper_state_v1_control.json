@@ -1,0 +1,71 @@
+{
+  "account": {
+    "basis_costs": 30.99070278916325,
+    "basis_notional": 99969.00929721084,
+    "cash": 0.0,
+    "cumulative_costs": 30.99070278916325,
+    "initial_capital": 100000.0,
+    "realized_pnl": 0.0,
+    "shares": 999.6900929721083
+  },
+  "identity": {
+    "account_id": "c42ae5a4e853",
+    "config_fingerprint": "411f10ae26cb281f",
+    "instrument": "SPY",
+    "strategy_id": "fixture_strategy",
+    "strategy_version": "1.0.0",
+    "timeframe": "1d"
+  },
+  "ledger": {
+    "last_hash": "16d001463c7bfe5eb0a9ed779043b6433eb3003bec8a81d58543360b5f4707a1",
+    "seq": 16
+  },
+  "open_trade": {
+    "buy_costs": 30.99070278916325,
+    "buy_notional": 99969.00929721084,
+    "entry_equity": 100000.0,
+    "entry_price": 100.0,
+    "entry_seq": 1,
+    "entry_time": "2024-07-02T13:30:00+00:00",
+    "fills": 1,
+    "sell_costs": 0.0,
+    "sell_notional": 0.0
+  },
+  "paper_version": "1.0.0",
+  "pending": {
+    "atr_at_decision": 2.0,
+    "decision_id": "c42ae5a4e853-D20240708",
+    "observed_at": "2024-07-08T20:00:00+00:00",
+    "pending_kind": "none",
+    "risk_approved_target": 1.0,
+    "scheduled_for": "2024-07-09T13:30:00+00:00",
+    "strategy_requested_target": 1.0
+  },
+  "progress": {
+    "broker_last_session": "2024-07-08T13:30:00+00:00",
+    "last_decision_id": "c42ae5a4e853-D20240708",
+    "last_input_fingerprint": "b8998507bd360422",
+    "last_requested": 1.0,
+    "last_session": "2024-07-08T13:30:00+00:00",
+    "session_seq": 5,
+    "trade_count": 0
+  },
+  "risk": {
+    "current_target": 1.0,
+    "drawdown": {
+      "duration": 0,
+      "hwm": 102968.07957612716,
+      "lock_remaining": 0,
+      "max_drawdown": -0.0003099070278915761,
+      "state": "NORMAL"
+    },
+    "session": {
+      "consecutive_losses": 0,
+      "last_equity": 102968.07957612716,
+      "lock_remaining": 0
+    },
+    "stop": null,
+    "stop_lockout": false
+  },
+  "schema_version": 1
+}

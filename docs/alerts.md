@@ -31,12 +31,13 @@ Severity describes operational attention only — never a financial opportunity.
 | `RISK_DRAWDOWN_WARNING` | WARNING | RiskManager | risk state NORMAL → WARNING |
 | `RISK_LOCK_COOLDOWN_STARTED` | WARNING | RiskManager | risk state → LOCKED (drawdown or session lock; cooldown starts with the lock) |
 | `RISK_LOCK_COOLDOWN_ENDED` | INFO | RiskManager | risk state LOCKED → other |
-| `RISK_STOP_TRIGGERED` | WARNING | RiskManager | `stop_triggered` in the decision reasons (close-based stop) |
+| `RISK_STOP_TRIGGERED` | WARNING | RiskManager | a stop **activation** (`stop_activation`, first close-based stop condition of the position episode, ADR-0034 D-A1); decision records written before ADR-0034 (no such field) keep the former rule, `stop_triggered` in the reasons, so recomputed history creates no new alert |
 | `PAPER_ENTRY_SCHEDULED`, `PAPER_EXIT_SCHEDULED`, `PAPER_REBALANCE_SCHEDULED` | INFO | PaperTrading | a decision's risk-approved instruction has `pending_kind` entry / exit / rebalance (the "instruction created" alerts; instructions that need no order are not reported) |
 | `PAPER_FILL_EXECUTED` | INFO | PaperTrading | a simulated fill in the ledger |
 | `PAPER_ORDER_REJECTED` | WARNING | PaperTrading | a simulated order rejected by the paper broker's safety checks |
 | `PAPER_ACCOUNT_ERROR` | CRITICAL | PaperTrading | manifest unreadable or not a pre-declared scenario |
-| `PAPER_STATE_CORRUPT` | CRITICAL | PaperTrading | `state.json` fails validation |
+| `PAPER_STATE_CORRUPT` | CRITICAL | PaperTrading | `state.json` fails validation or cannot be read |
+| `PAPER_ACCOUNT_INCOMPATIBLE` | CRITICAL | PaperTrading | `state.json` is intact but belongs to another configuration or risk-mechanism semantic version, an unsupported schema version, or a schema-1 state whose ADR-0034 fields cannot be determined (nothing is converted) |
 | `PAPER_LEDGER_VERIFICATION_FAILED` | CRITICAL | PaperTrading | ledger hash chain broken or inconsistent with the committed pointer |
 | `SYSTEM_DATABASE_UNAVAILABLE` | CRITICAL | System | PostgreSQL unreachable |
 | `SYSTEM_DASHBOARD_RESULTS_STALE` | INFO | System | persisted dashboard validation/ML results missing for the current dataset |

@@ -60,6 +60,8 @@ EVENT_TYPES: dict[str, tuple[str, str]] = {
     "PAPER_ORDER_REJECTED": (WARNING, SRC_PAPER),
     "PAPER_ACCOUNT_ERROR": (CRITICAL, SRC_PAPER),
     "PAPER_STATE_CORRUPT": (CRITICAL, SRC_PAPER),
+    # the state is intact but belongs to another configuration / semantic version (ADR-0034)
+    "PAPER_ACCOUNT_INCOMPATIBLE": (CRITICAL, SRC_PAPER),
     "PAPER_LEDGER_VERIFICATION_FAILED": (CRITICAL, SRC_PAPER),
     # system / safety
     "SYSTEM_DATABASE_UNAVAILABLE": (CRITICAL, SRC_SYSTEM),
