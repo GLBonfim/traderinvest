@@ -25,10 +25,16 @@ import numpy as np
 import pandas as pd
 
 from app.backtest.config import BacktestConfig
-from app.backtest.metrics import all_metrics, drawdown, returns_from_equity
+from app.backtest.metrics import (
+    all_metrics,
+    defined_returns,
+    drawdown,
+    undefined_mask,
+    without_undefined_return_metrics,
+)
 from app.backtest.portfolio import target_positions
 from app.risk.config import RISK_VERSION, RiskConfig
-from app.risk.limits import LOCKED, NORMAL, WARNING
+from app.risk.limits import LOCKED, NORMAL, WARNING, check_equity
 from app.risk.manager import RiskManager, apply_order, plan_order
 
 EPS = 1e-12
@@ -41,7 +47,8 @@ TRADE_COLUMNS = (
     "net_return",
     "costs",
     "holding_sessions",
-    "exit_reason",
+    "exit_reason",  # the risk decision reason of the exit (unchanged meaning)
+    "exit_causes",  # ADR-0034 D-A1: every cause present, canonical (`stop+strategy`)
 )
 
 
@@ -103,6 +110,7 @@ def simulate(
             equity=equity,
             triggered=triggered,
             touch=touch,
+            strategy_state=inp.states[t],
         )
         targets[t] = d.approved_exposure
         decisions.append(
@@ -125,6 +133,9 @@ def simulate(
                 "stop_intraday_touch": d.stop_intraday_touch,
                 "realized_vol": inp.vol[t],
                 "atr": inp.atr[t],
+                # appended (ADR-0034 D-A1)
+                "stop_activation": d.stop_activation,
+                "exit_causes": d.exit_causes,
             }
         )
 
@@ -172,6 +183,7 @@ def simulate(
             if shares <= EPS and entry is not None:
                 pnl = cash - entry["equity"]
                 last = decisions[-1]["reasons"] if decisions else ""
+                causes = decisions[-1]["exit_causes"] if decisions else ""
                 trades.append(
                     {
                         "entry_time": inp.index[entry["t"]],
@@ -183,6 +195,7 @@ def simulate(
                         "costs": entry["costs"],
                         "holding_sessions": t - entry["t"],
                         "exit_reason": _exit_reason(last),
+                        "exit_causes": causes,
                     }
                 )
                 entry = None
@@ -197,6 +210,7 @@ def simulate(
             cost_today, traded, executed = costs.total, notional, True
 
         equity = cash + shares * inp.closes[t]
+        check_equity(equity)  # D-A5: invalid state fails, never a valid-looking row
         triggered, touch = rm.on_close(
             equity, low=inp.lows[t], close=inp.closes[t], holding=shares > EPS
         )
@@ -204,7 +218,8 @@ def simulate(
             {
                 "ts": inp.index[t],
                 "state": inp.states[t],
-                "position": shares * inp.closes[t] / equity,
+                # D-A5: nothing to normalise at equity 0 (holdings are then worth 0 too)
+                "position": shares * inp.closes[t] / equity if equity > 0 else 0.0,
                 "shares": shares,
                 "open": inp.opens[t],
                 "close": inp.closes[t],
@@ -214,6 +229,10 @@ def simulate(
                 "cash": cash,
                 "equity": equity,
                 "risk_state": rm.risk_state,
+                # ADR-0034 D-A8: each monitor's own state at this close (moved to the end of
+                # the frame in `_assemble`)
+                "drawdown_state": rm.dd.state,
+                "session_locked": rm.sess.locked,
             }
         )
         decide(t, equity, triggered, touch)
@@ -245,6 +264,9 @@ def simulate(
         "pending": pending,
         "open_position": open_position,
     }
+
+
+MONITOR_COLUMNS = ("drawdown_state", "session_locked")
 
 
 def _exit_reason(reasons: str) -> str:
@@ -302,13 +324,18 @@ def _assemble(
 ) -> RiskRun:
     initial = bt.initial_capital
     eq = pd.DataFrame(net["rows"]).set_index("ts")
-    eq["daily_return"] = returns_from_equity(eq["equity"], initial)
+    eq["daily_return"] = defined_returns(eq["equity"], initial)  # pd.NA where undefined (D-A5)
     eq["cumulative_return"] = eq["equity"] / initial - 1
     eq = eq.join(drawdown(eq["equity"], initial))
     gross_equity = pd.DataFrame(gross["rows"]).set_index("ts")["equity"]
     eq["gross_equity"] = gross_equity
+    eq = eq[[c for c in eq.columns if c not in MONITOR_COLUMNS] + list(MONITOR_COLUMNS)]
     trades = pd.DataFrame(net["trades"], columns=list(TRADE_COLUMNS))
-    metrics = all_metrics(eq, gross_equity, trades, initial, bt.periods_per_year, bt.risk_free_rate)
+    metrics = without_undefined_return_metrics(
+        all_metrics(eq, gross_equity, trades, initial, bt.periods_per_year, bt.risk_free_rate),
+        int(undefined_mask(eq["daily_return"]).sum()),
+        int(undefined_mask(defined_returns(gross_equity, initial)).sum()),
+    )
     decisions = pd.DataFrame(net["decisions"])
     window = decisions[decisions["bar_ts"] >= eq.index[0]]
     states = eq["risk_state"].value_counts(normalize=True)
@@ -324,11 +351,19 @@ def _assemble(
         "intervention_rate": float(window["intervention"].mean()),
         "stop_triggers": float(window["stop_triggered"].sum()),
         "stop_intraday_touches_not_triggered": float(window["stop_intraday_touch"].sum()),
+        # D-A8: transitions of the DRAWDOWN monitor into LOCKED only (a session lock or a lock
+        # that persists, including a relock at the end of a zero-equity cooldown, is not one)
         "drawdown_lock_events": float(
-            ((eq["risk_state"] == LOCKED) & (eq["risk_state"].shift(1) != LOCKED)).sum()
+            ((eq["drawdown_state"] == LOCKED) & (eq["drawdown_state"].shift(1) != LOCKED)).sum()
         ),
         **{f"time_in_{s.lower()}": float(states.get(s, 0.0)) for s in (NORMAL, WARNING, LOCKED)},
         **{f"reason_{r}": float(c) for r, c in reasons[reasons != ""].value_counts().items()},
+        # appended (ADR-0034 D-A1/D-A8): first stop condition of each position episode, and
+        # transitions of the session lock into locked
+        "stop_activations": float(window["stop_activation"].sum()),
+        "session_lock_events": float(
+            (eq["session_locked"] & ~eq["session_locked"].shift(1, fill_value=False)).sum()
+        ),
     }
     realized = float(trades["net_pnl"].sum()) if len(trades) else 0.0
     metrics.update(realized_pnl=realized, total_pnl=float(eq["equity"].iloc[-1]) - initial)

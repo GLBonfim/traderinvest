@@ -8,6 +8,17 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 > and to say `NO STATISTICAL EDGE FOUND` or `INSUFFICIENT EVIDENCE` when it does not.
 > **Real-money execution is disabled and blocked in code.**
 
+## TraderInvest FX (desktop Forex platform)
+
+A native Windows application with five agents (Trend, Momentum, Mean Reversion, Regime filter,
+Portfolio Coordinator), a central orchestrator and a central risk manager, shown as an
+isometric pixel-art operations room. SIMULATION environment only (synthetic prices, no real
+money). Run `uv run python -m app.desktop`; build the `.exe` with
+`uv run --group build python packaging/build.py`. Details: [docs/fx-platform.md](docs/fx-platform.md),
+installation: [docs/install.md](docs/install.md),
+commercial notes: [docs/commercial-readiness.md](docs/commercial-readiness.md),
+decisions: ADR-0036 to ADR-0038.
+
 ## Status
 
 | Phase | Scope | Status |
@@ -45,8 +56,7 @@ INCREMENTAL EDGE FOUND** (out-of-sample AUC ≈ 0.5, accuracy below "always up")
 risk-management layer (sizing, limits, locks, stops) measured against a no-overlay control;
 it is a control layer, not an alpha source. Phase 12 adds paper trading: a **local
 simulation that does not transmit orders to any brokerage or market**, with restart-safe
-accounts and an append-only ledger. There are
-**no indicators, no signals, no strategies and no trading logic** yet.
+accounts and an append-only ledger.
 
 ## Principles
 
@@ -191,10 +201,14 @@ uv run python -m app.ml.cli run --symbol SPY
 
 Protocol, features, split and results: [docs/machine-learning.md](docs/machine-learning.md).
 
-Risk overlays on the baselines (measurement only; ~60 s; CSV in git-ignored `data/risk/`):
+Risk overlays on the baselines (measurement only; full suite ~60 s; each run writes a new
+`data/risk/<run_id>/` with `manifest.json` and CSV, git-ignored):
 
 ```bash
-uv run python -m app.risk.cli run --symbol SPY
+uv run python -m app.risk.cli run --symbol SPY                 # full suite (6 x 6 x 3)
+uv run python -m app.risk.cli run --symbol SPY --strategy sma_trend \
+    --scenario control_no_overlay atr_stop_3 --cost D --slice full   # only the selected cases
+uv run python -m app.risk.cli verify --run data/risk/<run_id>  # read-only integrity check
 ```
 
 Architecture, formulas, stop/OHLC conventions and results: [docs/risk-management.md](docs/risk-management.md).

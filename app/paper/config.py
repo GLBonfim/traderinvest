@@ -33,7 +33,9 @@ class PaperConfig:
             raise ValueError("cash_tolerance must be >= 0")
 
     def fingerprint(self) -> str:
-        payload = json.dumps(
-            {"paper": PAPER_VERSION, "mode": MODE, **asdict(self)}, sort_keys=True, default=str
-        )
+        body = {"paper": PAPER_VERSION, "mode": MODE, **asdict(self)}
+        semantics = self.risk.semantics()
+        if semantics:  # ADR-0034: only profiles with an enabled event mechanism change
+            body["semantics"] = semantics
+        payload = json.dumps(body, sort_keys=True, default=str)
         return hashlib.sha256(payload.encode()).hexdigest()[:16]

@@ -29,10 +29,13 @@ from app.database.session import get_session_factory
 from app.paper.config import PaperConfig
 from app.paper.engine import baseline_inputs, replay_baselines
 from app.paper.ledger import manifest, write_ledger
-from app.paper.store import DEFAULT_ROOT, PaperStore
+from app.paper.store import DEFAULT_ROOT, PaperStore, conflicting_accounts
+from app.paper.trader import account_id_for
 from app.risk.config import SCENARIOS
 
 log = get_logger(__name__)
+TIMEFRAME = "1d"  # the only timeframe of incremental paper accounts (PaperStore default)
+EXIT_REFUSED = 2  # an account was refused (identity conflict); nothing was created
 
 
 def _ny_date(ts: pd.Timestamp) -> date:
@@ -79,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         bars = bars[[_ny_date(t) <= args.until for t in bars.index]]
 
     started = time.perf_counter()
+    refused = False
     if args.command == "replay":
         runs = replay_baselines(bars, config, instrument=symbol, start=args.start)
         out = write_ledger(runs, config, args.out)
@@ -94,21 +98,52 @@ def main(argv: list[str] | None = None) -> int:
         result = {"mode": "paper_simulation:incremental", "accounts": {}}
         for sid in wanted:
             version, bar_inputs = inputs[sid]
+            expected = account_id_for(config, sid, version, symbol, TIMEFRAME)
+            if not (args.root / expected / "state.json").exists():  # no account yet
+                others = conflicting_accounts(
+                    args.root,
+                    account_id=expected,
+                    strategy_id=sid,
+                    scenario=config.risk.name,
+                    instrument=symbol,
+                    timeframe=TIMEFRAME,
+                )
+                if args.command == "status":  # read-only: never creates an account
+                    result["accounts"][sid] = {
+                        "status": "no_account",
+                        "account_id": expected,
+                        "incompatible_accounts": others,
+                    }
+                    continue
+                if others:  # never a silent parallel account next to an existing one
+                    refused = True
+                    result["accounts"][sid] = {
+                        "status": "refused",
+                        "account_id": expected,
+                        "incompatible_accounts": others,
+                        "error": (
+                            f"account(s) {others} exist for {sid} / {config.risk.name} / "
+                            f"{symbol} / {TIMEFRAME} under another identity (an earlier "
+                            "configuration, risk-mechanism semantic version — ADR-0034 — or "
+                            f"strategy version); not creating {expected} next to them. They "
+                            "were not opened or changed."
+                        ),
+                    }
+                    log.error("paper.account_identity_conflict", strategy=sid,
+                              account_id=expected, existing=others)  # fmt: skip
+                    continue
             store = PaperStore(
                 config, strategy_id=sid, strategy_version=version, instrument=symbol, root=args.root
             )
             if args.command == "run":
-                st = store.trader.state
-                if st.last_session is None and args.start is not None:
-                    bar_inputs = [b for b in bar_inputs if _ny_date(b.bar_ts) >= args.start]
-                counts = store.process_many(bar_inputs)
+                counts = store.process_many(bar_inputs, start=args.start)
                 result["accounts"][sid] = {**counts, **store.status()}
             else:
                 result["accounts"][sid] = store.status()
     result["elapsed_s"] = round(time.perf_counter() - started, 2)
     log.info(f"paper.{args.command}", scenario=args.scenario, elapsed_s=result["elapsed_s"])
     print(json.dumps(result, indent=2, default=str))
-    return 0
+    return EXIT_REFUSED if refused else 0
 
 
 if __name__ == "__main__":

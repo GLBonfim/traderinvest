@@ -1,0 +1,4 @@
+# Frozen M5 specialty-balanced experiment
+Goal: test train/validation population mismatch; 5/1 historical training matching mass0.69% continuation,5.5%reversal,8.4%impulse rather than presumed dominance.
+Design: each pair purged TRAIN weights W/(2*nmatch), W/(2*nbg), replacing5/1 with50/50totalmass; W=sumoriginal5/1 preserves pair mass and L2relative strength. No target magnitudes/recency/uniqueness, no clamps, reject emptygroup. Same51features/6depth3/5/15models, gates/costs/thresholds/2024/25exploratory unchanged. No2026. Strong overweight rarepatterns risks overfit; weightedclassifier not calibratedprob. Weights do not create observations. No promotion.
+Tasks: RED syntheticexactmass/futureinvariance/emptyinvalid tests; implement separatewrapper; GREENstatic+review; freeze9sources beforedata; queue exactlyonce manager; auditoutcome later. H1 and collector preserved.

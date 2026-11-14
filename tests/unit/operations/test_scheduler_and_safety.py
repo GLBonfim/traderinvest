@@ -212,3 +212,145 @@ def test_operations_has_no_ad_hoc_network_scheduler_infra_or_trading_imports() -
 
 def test_trading_modes_unchanged() -> None:
     assert {x.value for x in TradingMode} == {"disabled", "paper"}
+
+
+# ── Phase 6, M3: scheduler failure policy (ADR-0033) ──
+
+
+class RaisingPipeline:
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+
+    def run(self, **kw: object) -> m.RunResult:
+        raise self.exc
+
+
+class LogRecorder:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, dict[str, object]]] = []
+
+    def __getattr__(self, level: str):  # type: ignore[no-untyped-def]
+        return lambda event, **kw: self.events.append((level, event, kw))
+
+
+def failing_scheduler(
+    tmp: Path, clock: Clock, plan: list[BaseException | None], svc: FakeServices | None = None
+) -> Scheduler:
+    """Each scheduled run takes the next item of `plan`: an exception to raise, or None for a
+    real pipeline run on fake services."""
+    svc = svc or FakeServices(stored={date(2024, 7, 1)}, published={date(2024, 7, 2)})
+    store = OpsStore(tmp)
+
+    def factory() -> object:
+        exc = plan.pop(0) if plan else None
+        return (
+            RaisingPipeline(exc)
+            if exc
+            else Pipeline(CFG, svc, OpsStore(tmp), clock=clock, calendar=CAL)
+        )
+
+    return Scheduler(CFG, factory, store, clock=clock, sleep=clock.sleep, calendar=CAL)  # type: ignore[arg-type]
+
+
+def test_failed_run_is_logged_once_and_written_to_the_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.operations import scheduler as sched_mod
+
+    rec = LogRecorder()
+    monkeypatch.setattr(sched_mod, "log", rec)
+    clock = Clock("2024-07-02T21:00:00")
+    secret = RuntimeError("cannot reach postgresql://user:hunter2@db/x\nsecond line")
+    sch = failing_scheduler(tmp_path, clock, [secret])
+    t = sch.tick()
+    assert t.ran and t.run_status == sched_mod.RUN_ERROR  # never a success status
+    assert t.error == "RuntimeError: cannot reach postgresql://***@db/x second line"
+    hb = OpsStore(tmp_path).state["scheduler"]
+    assert hb["last_run_status"] == sched_mod.RUN_ERROR and hb["consecutive_failures"] == 1
+    assert hb["last_error"]["error"] == t.error and "hunter2" not in str(hb)
+    assert hb["retry_not_before"] == "2024-07-02T21:05:00+00:00" and hb["halted"] is None
+    errors = [e for e in rec.events if e[0] == "error"]
+    assert len(errors) == 1 and errors[0][1] == "operations.scheduled_run_failed"
+    assert "hunter2" not in str(rec.events)
+    assert OpsStore(tmp_path).history() == []  # no run recorded as completed
+
+
+def test_backoff_then_recovery_resets_the_failure_count(tmp_path: Path) -> None:
+    clock = Clock("2024-07-02T21:00:00")
+    sch = failing_scheduler(tmp_path, clock, [RuntimeError("transient"), RuntimeError("again")])
+    ticks = sch.run_forever(max_ticks=8)
+    ran = [(t.at[11:16], t.run_status) for t in ticks if t.ran]
+    # failure at 21:00 -> no attempt before 21:05; failure at 21:05 -> none before 21:15;
+    # 21:15 succeeds (real pipeline) and the count resets
+    assert ran == [("21:00", "RUN_ERROR"), ("21:05", "RUN_ERROR"), ("21:15", m.COMPLETED)]
+    assert "backing off after 2 failed run(s)" in ticks[2].reason and not ticks[2].ran
+    hb = OpsStore(tmp_path).state["scheduler"]
+    assert hb["consecutive_failures"] == 0 and hb["last_run_status"] == m.COMPLETED
+    assert hb["halted"] is None and hb["last_error"]["error"] == "RuntimeError: again"
+    assert not sch.halted and len(ticks) == 8  # kept polling
+
+
+def test_halts_after_three_consecutive_failures(tmp_path: Path) -> None:
+    clock = Clock("2024-07-02T21:00:00")
+    sch = failing_scheduler(tmp_path, clock, [RuntimeError("x")] * 5)
+    ticks = sch.run_forever(max_ticks=50)
+    assert [t.run_status for t in ticks if t.ran] == ["RUN_ERROR"] * 3
+    assert sch.halted == "3 consecutive failed runs" and ticks[-1].ran  # stopped right after
+    st = scheduler_status(OpsStore(tmp_path), clock.t, 300)
+    assert st["status"] == "halted: 3 consecutive failed runs"
+
+
+@pytest.mark.parametrize("fatal", ["lock_release", "ops_store"])
+def test_halts_immediately_when_lock_or_store_state_is_uncertain(
+    tmp_path: Path, fatal: str
+) -> None:
+    from app.operations.lock import LockReleaseError
+    from app.operations.store import OpsStoreError
+
+    exc = (
+        LockReleaseError(13, "lock not released")
+        if fatal == "lock_release"
+        else OpsStoreError("corrupt")
+    )
+    clock = Clock("2024-07-02T21:00:00")
+    sch = failing_scheduler(tmp_path, clock, [exc])
+    ticks = sch.run_forever(max_ticks=10)
+    assert len(ticks) == 1 and sch.halted and "operator action required" in sch.halted
+    assert OpsStore(tmp_path).state["scheduler"]["halted"] == sch.halted
+
+
+@pytest.mark.parametrize("exc", [KeyboardInterrupt(), SystemExit(3)])
+def test_control_exceptions_are_never_absorbed(tmp_path: Path, exc: BaseException) -> None:
+    clock = Clock("2024-07-02T21:00:00")
+    with pytest.raises(type(exc)):
+        failing_scheduler(tmp_path, clock, [exc]).tick()
+    assert not OpsStore(tmp_path).state.get("scheduler")  # no heartbeat claiming anything
+
+
+def test_keyboard_interrupt_stops_the_loop(tmp_path: Path) -> None:
+    clock = Clock("2024-07-02T21:00:00")
+    sch = failing_scheduler(tmp_path, clock, [KeyboardInterrupt()])
+    assert sch.run_forever(max_ticks=10) == []  # stopped at once, no further ticks
+
+
+def test_system_exit_propagates_out_of_the_loop(tmp_path: Path) -> None:
+    clock = Clock("2024-07-02T21:00:00")
+    with pytest.raises(SystemExit):
+        failing_scheduler(tmp_path, clock, [SystemExit(2)]).run_forever(max_ticks=10)
+
+
+def test_lock_is_released_when_a_scheduled_run_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(self: Pipeline, *a: object) -> m.RunResult:
+        raise RuntimeError("bug outside the stages (injected)")
+
+    monkeypatch.setattr(Pipeline, "_run_locked", boom)
+    clock = Clock("2024-07-02T21:00:00")
+    sch = failing_scheduler(tmp_path, clock, [])  # real pipeline whose locked part raises
+    t = sch.tick()
+    assert t.run_status == "RUN_ERROR" and "bug outside the stages" in (t.error or "")
+    assert not (tmp_path / "pipeline.lock").exists()  # released by the pipeline's finally
+    monkeypatch.undo()
+    clock.sleep(300)
+    assert sch.tick().run_status == m.COMPLETED  # the next attempt acquires it normally

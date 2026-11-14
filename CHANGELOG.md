@@ -29,9 +29,85 @@ versioning: [SemVer](https://semver.org/).
   before download); `cli fetch --add-missing` and `cli amend --reaudit-snapshot` add files to
   the snapshot and re-audit under a hash chain (`5f50f2ae…` → `7276157c…`; split unchanged).
 
-## [Unreleased] — earlier, branch `feature/alpaca-paper-validation`
+## [Unreleased] — branch `feature/fx-desktop-platform`
 
-No external sandbox order has been placed.
+### Added
+- IBKR paper phase B: an experimental paper pilot (`app/fx/ibkr/pilot.py`) and paper order
+  executor (`app/fx/ibkr/execution.py`).
+  - Dry-run by default; explicit `--arm --confirm ARMAR-PAPER`.
+  - DU identity checked before each order; LIVE, fresh quotes only.
+  - Protected bracket entries with protection confirmation.
+  - Idempotent client order ids, write-ahead journal, and reconciliation instead of blind
+    resends.
+  - Closes that never reverse a position.
+  - Isolated virtual capital and state.
+  - Candidate retirement and replacement (or NO TRADE).
+  - `app/fx/strategy.py`: the signal-model contract.
+- TraderInvest FX (ADR-0036 to ADR-0038): Forex domain (`app/fx`) with bid/ask quotes and data
+  origin labels, SIMULATION/DEMO/REAL environments (REAL refused by the ADR-0006 guard), 24/5
+  calendar with the 17:00 New York trading day, five agents and a portfolio coordinator, a
+  central risk manager (5 entries/day, −5 % / +15 % persisted daily locks, kill switch,
+  stop-based sizing, leverage, margin, spread, freshness and exposure checks), a multi-currency
+  netting book, a synthetic market and a simulated broker (idempotent orders, injectable
+  rejections/timeouts/partial fills, gapped stops, margin close-out), an orchestrator with the
+  full order lifecycle, write-ahead persistence and crash recovery, and a hash-chained SQLite
+  journal.
+- Engine process (`app/engine`): loopback-only JSON-lines protocol with a per-launch session
+  token, confirmations for destructive commands, single instance per data directory, orphan
+  shutdown.
+- Desktop application (`app/desktop`, PySide6): isometric pixel-art operations room with
+  animated agents and data packets, market/portfolio/risk/agents/orders panels, live event log,
+  kill switch, settings, first-run risk disclaimer, full screen, generated icon; state is never
+  shown by colour alone.
+- Packaging (`packaging/`): PyInstaller one-folder build with icon and version resource, frozen
+  engine smoke test, portable zip, third-party notices, draft commercial licence.
+- 90 tests in `tests/unit/fx`; docs `docs/fx-platform.md`, `docs/commercial-readiness.md`.
+
+### Added (agents v2 and validation, 2026-10-18)
+- Agents v2 on shared, causal vectorised signals (`app/fx/agents/signals.py`), coordinator v2
+  (approved agents only, conflicts, owner-only exits), time stops, flat before the weekend.
+- Research lab `app/fx/research`: 6 years of IBKR M15 BID/ASK bars for 9 pairs (read-only,
+  manifest with SHA-256), bid/ask backtester with conservative fills and costs in R,
+  pre-registered dev/validation/holdout study (Holm-adjusted block bootstrap, random-timing
+  baseline, M15 vs H1), full-system replay through the real orchestrator, report generator.
+- Result: **no agent approved** (holdout evaluated once). `calibrated.APPROVED` is empty; the
+  interface shows agents "em observação"; `simulation.allow_unapproved_agents` enables a
+  clearly labelled demonstration mode on synthetic prices only.
+- Fixed: drawdown in R and in the replay now counts from the starting capital.
+- Maximum drawdown breaker (default 20 % below the persisted equity peak) engages the kill
+  switch; it blocks new entries only (open positions keep their stops). Shown in the Risk
+  panel and adjustable in Settings. Settings also offer the SIMULATION-only demonstration
+  toggle for unapproved agents (off by default).
+
+### Added (IBKR phase A, 2026-10-18)
+- `app/fx/ibkr`: read-only, paper-only IBKR connection through IB Gateway/TWS (`ib_async`
+  2.1.0, BSD): quotes (LIVE/DELAYED origin), MIDPOINT M15 bars, account values, forex
+  positions; no order method, `readonly=True`, non-paper sessions refused and disconnected,
+  loopback only. `python -m app.fx.ibkr.probe` diagnoses the connection. 11 tests with an
+  in-memory fake (no network). Note: `ib_async` requires `tzdata<2026` (2026.5 -> 2025.3).
+
+### Fixed (technical review 2026-10-18)
+- E1: the daily-loss lock now takes precedence over the profit-target lock and is evaluated on
+  every observation (lock upgrade + flatten policy); it is never downgraded.
+- E2: one source of truth for the environment (`validate_environment`: configuration vs
+  adapter vs enabled = SIMULATION) checked before any processing; the UI badge shows only the
+  engine's validated environment.
+- E3: orders with an unknown outcome stay UNKNOWN unless the adapter guarantees authoritative
+  lookups; bounded retries on the engine clock, entries blocked on the pair (all pairs after a
+  restart), kill switch + `order_unresolved` alert on exhaustion; never resent.
+- M1: every order state change goes through `lifecycle.transition`.
+- M2/M3/M4: classified start-up refusals (exit code 4, no automatic restart): invalid config,
+  unreadable/corrupt/incomplete state, broken or truncated journal, account currency or pairs
+  different from the persisted account; nothing is repaired or recreated automatically.
+- M5: the safety pause is persisted; leaving it needs the typed word `RETOMAR`.
+- M6: partial fills use cumulative venue quantities; a remainder-cancelled order ends
+  CANCELLED with fills; the entry is counted once.
+- Packaging: unused modules (mypy, setuptools, lxml, yaml, ...) excluded from the bundle
+  (171 -> 159 MB); third-party notices aligned with the bundle.
+
+## [Unreleased] — earlier work
+
+Branch `feature/alpaca-paper-validation`. No external sandbox order has been placed.
 
 ### Added
 - OPG submission window (`app/broker/timing.py`, ADR-0026): an `opg` order is sent only at or

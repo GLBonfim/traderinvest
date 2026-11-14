@@ -7,8 +7,8 @@ Point-in-time processing, for each bar t in order:
      available at the close of t-1.
   2. Pending breakouts/breakdowns from earlier bars are updated: RETEST events (observations)
      and OUTCOMES (failed / held), each stamped with the bar at which they became known.
-  3. Pivots confirmed at t (pivot at t - swing_right_bars) are added: structure labels, zones.
-  4. Touches of zones available before t are recorded.
+  3. Touches are recorded against zone bounds available before t.
+  4. Pivots confirmed at t (pivot at t - swing_right_bars) are added: structure labels, zones.
   5. The STATE row for t (structure, trend, nearest zones, range state) is emitted.
 Nothing at step t reads bars after t, so state(t) is identical whether or not later bars exist.
 """
@@ -378,7 +378,10 @@ class PriceActionEngine:
                 still.append(p)
             pending = still
 
-            # 3. pivots confirmed at t
+            # 3. touches use the bounds known before this bar, before pivots can widen zones
+            book.record_touches(t, lo[t], h[t])
+
+            # 4. pivots confirmed at t
             for rec in confirmed.get(t, []):
                 label = rec["label"]
                 if isinstance(label, str):  # the first pivot of each kind has no label
@@ -389,9 +392,6 @@ class PriceActionEngine:
                 else:
                     last_low = rec["price"]
                 book.add_pivot(rec["price"], rec["kind"], rec["pivot_idx"], rec["swing_id"], t)
-
-            # 4. touches of zones available before t
-            book.record_touches(t, lo[t], h[t])
 
             # 5. state after bar t
             structure = classify_structure(high_labels, low_labels, cfg.structure_min_labels)

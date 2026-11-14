@@ -503,6 +503,568 @@ acceptance; they are superseded by a new ADR.
   some cases (sizing on 9,999). Vendor acceptance of LOO for this account is unverified until
   the first submission.
 
+## ADR-0028 — Read-only market API for the web UI
+
+- **Status:** Accepted (2026-10-11, owner approval; frontend phase 3B)
+- **Context:** The static web UI at `/ui` (same origin, CSP `'self'`) needs stored market
+  analysis for its Market Analysis page. Until now the API exposed only `GET /health`, and
+  `tests/unit/test_api.py` pinned that route set.
+- **Decision:**
+  - Exactly two new routes, both `GET`, under `/api/v1/market`: `/summary` (latest closed
+    session: bar, freshness, regimes, indicators with warm-up status, candle observations,
+    price-action structure) and `/series?range=3m|6m|1y|2y|5y` (default `1y`; 63/126/252/504/1,260
+    sessions; closed OHLCV plus SMA 20/50/200, Bollinger, RSI 14 and MACD). SPY only; no symbol,
+    `as_of` or any other parameter (unknown parameters → 422). The route whitelists in the unit
+    tests list these two routes explicitly; nothing else is allowed.
+  - Values come from the existing engines (candles, price action, indicators, regimes) through
+    `app.dashboard.services` on stored closed bars; nothing is re-implemented. Strategies are
+    not run. Prices are raw (dividend-unadjusted) and labelled so; sessions are XNYS dates.
+    NaN/inf become `null`, never 0; `insufficient_data` labels are reported as unavailable.
+  - Point-in-time: only the latest closed session is described (swings with `confirmed_at`,
+    events with `available_at` up to it; the engine's "as of last bar" zones are therefore
+    valid). Indicator series are computed on the full history and sliced (causal engines).
+  - Database access: one `SET TRANSACTION READ ONLY` transaction per request, rolled back at the
+    end (verified: writes rejected inside it; the pooled connection is unaffected afterwards).
+    Errors: database unavailable → 503 with a generic detail (exception type logged only), no
+    stored data → 404, invalid range or parameters → 422; write methods → 405.
+  - Engine outputs are cached in-process per dataset identity (app version, provider, bars,
+    first/last bar, latest `ingested_at`): bounded LRU of 2, thread-safe, one computation per
+    key at a time, failures never cached. A new ingestion changes the key.
+  - Every response carries `meta.source = "LOCAL"` and the label "NOT LIVE · END-OF-DAY
+    RESEARCH DATA"; the UI accepts API data only with that marker and keeps DEMO data separate.
+  - Excluded: any import of broker, paper, operations, alerts, ingestion or data providers
+    (tested); any write, order, account or configuration endpoint; real-time data.
+- **Consequences:** The first request per dataset computes the engines (seconds); later
+  requests are served from the cache. The UI shows stored historical research data, which is
+  still not live market data. Further endpoints require a new ADR.
+
+## ADR-0029 — Read-only research API (strategies, backtests, curves)
+
+- **Status:** Accepted (2026-10-11, owner approval; frontend phase 4B)
+- **Context:** The web UI needs the Phase 7/8 research results. Statistical validation, ML and
+  walk-forward are explicitly out of scope for this step.
+- **Decision:**
+  - Exactly three new routes, all `GET`, under `/api/v1/research`: `/strategies` (fixed baseline
+    rules, versions, features, parameters and the two benchmark definitions), `/backtests?slice=
+    full|early|late` (default `full`; every Phase 8 metric of the six strategies and both buy &
+    hold benchmarks) and `/curves?slice=…&kind=net|gross` (cumulative return and drawdown per
+    series on the shared session axis). SPY only; unknown parameters → 422. The route
+    whitelists list these three routes explicitly.
+  - Results come from the existing backtester `run_suite` with the default `BacktestConfig`
+    (next-session-open execution, generic cost assumptions labelled as such), the slice dates
+    as `start`/`end`; strategies are computed on bars up to the slice end only. Nothing is
+    re-implemented, tuned or ranked: series are listed in a fixed order (strategies, then the
+    price and the total-return benchmark, which are never treated as equivalent).
+  - Slices are the pre-declared Phase 9 date ranges and are reported with `out_of_sample: false`:
+    the baselines are not fitted, so a slice is a descriptive sub-period, not a validation. They
+    are restated in the API module (importing `app.validation` would load the validation engine)
+    and a unit test asserts they equal `DEFAULT_SLICES`.
+  - Gross curves use the same fills with zero costs (the engine's gross equity); their drawdown
+    uses the engine's own drawdown definition. Undefined metrics are `null`, never 0.
+  - Every response carries `meta.source = "LOCAL"`, the dataset key, the backtest and strategy
+    configuration fingerprints, the window, the cost assumptions and when it was computed.
+  - One `SET TRANSACTION READ ONLY` transaction per request, rolled back. Errors as ADR-0028:
+    database unavailable → 503 (generic detail), no stored data or a slice without sessions →
+    404, invalid parameters → 422, write methods → 405.
+  - In-process caches: suites keyed by dataset identity + strategy engine fingerprint + backtest
+    configuration (which contains the slice), bounded LRU of 6; serialized responses derived from
+    a cached suite (keyed additionally by response and curve kind), LRU of 24. Same thread-safety
+    and failure rules as ADR-0028 (one computation per key, failures never cached).
+  - The dashboard research service is not imported (it would load the ML stack); the API uses
+    the same underlying backtest functions, and equivalence with that service is tested. Same
+    excluded imports as ADR-0028.
+- **Consequences:** The first request per slice and dataset runs the full backtest suite
+  (seconds); repeated requests are served from the cache. Validation, ML and walk-forward need
+  further ADRs.
+
+## ADR-0030 — Persistent registry of offline research runs
+
+- **Status:** Accepted (2026-10-11, owner approval; Phase 5C)
+- **Context:** Statistical validation and ML runs are computed offline and explicitly (Phase 5A,
+  option B); their results must be stored so they can be read later without recomputation, and
+  a reader must never mistake a partial, failed or altered run for a complete one.
+- **Decision:**
+  - `app/research_runs/registry.py`, a file registry under a caller-given root (git-ignored
+    `data/` in practice): `index.jsonl` (append-only, hash-chained history reusing the alert
+    store chain format), `staging/<run_id>/` while writing, `runs/<run_id>/` once published.
+  - Run ids `{validation|ml}-<UTC timestamp>-<8 hex>`. Manifest `run.json`, format version 1:
+    kind, start/end, config / data / dataset fingerprints as explicit `known | unknown |
+    not_applicable` values (never guessed), app version, git commit and dirty state, parameters,
+    and size + SHA-256 of every artifact.
+  - Publication: artifacts written atomically to staging, manifest validated and written, hashes
+    re-checked, staging renamed to `runs/`, then a `completed` event carrying the manifest
+    SHA-256. COMPLETE requires that event, a matching manifest hash and every artifact matching;
+    otherwise INTEGRITY_FAILED, FAILED (a `failed` event) or INCOMPLETE (no terminal event, also
+    when a published directory lacks its `completed` event). Readers never write; writers refuse
+    a corrupt history; invalid transitions are rejected against the history.
+  - The hash-chain and atomic-write primitives move unchanged to `app/core/integrity.py`
+    (on-disk format byte-identical; the alert, broker and operations stores keep their names).
+  - Nothing is deleted automatically: failed staging is kept for diagnosis and unregistered
+    directories are only reported.
+- **Consequences:** Results are verifiable and attributable. Limits: no directory fsync on
+  Windows; `rename` is atomic only on one volume (staging and runs share the root); INCOMPLETE
+  does not distinguish "running" from "interrupted"; `git_dirty` counts untracked files.
+
+## ADR-0031 — Recorded statistical-validation runs (`record` / `verify`)
+
+- **Status:** Accepted (2026-10-11, owner approval; Phase 5D). Supersedes, for recorded runs
+  only, the "outputs ephemeral" clause of ADR-0018; the ADR-0018 methodology is unchanged.
+- **Decision:**
+  - `python -m app.validation.cli record --symbol SPY --registry DIR` runs the existing
+    `Validator` with the fixed `ValidationConfig` and records a `validation` run (ADR-0030):
+    the five `ValidationReport.frames()` tables as CSV plus `summary.json`. `--registry` is
+    required (no implicit location). The existing `run` subcommand is unchanged.
+  - Bars and the dataset identity are read in one `SET TRANSACTION READ ONLY` transaction,
+    rolled back. Inputs are checked before anything is registered; an engine or write error
+    records the run as failed; a database error prints only the exception type.
+  - `verify --registry DIR [--run-id ID]` only reads and re-checks history, manifest and
+    hashes. Exit codes: 0 complete; 1 run not complete; 2 invalid input; 3 registry refused or
+    unavailable (busy, corrupt, other registry or file-system error); 4 data unavailable.
+  - One job per invocation, synchronous, only when invoked: no startup hook, schedule or HTTP
+    route. The data fingerprint is the SHA-256 of the OHLCV + adj_close content and index (method
+    recorded in the manifest).
+- **Consequences:** The first real run (2026-10-11) is reproducible from its manifest, but it was
+  recorded on a dirty tree (commit 144c593); later runs identify their code by commit. Reading
+  recorded runs through the API needs a further ADR.
+
+## ADR-0032 — PipelineLock serialised by an OS mutex
+
+- **Status:** Accepted (2026-10-11, owner approval; Phase 5E). Refines the lock mechanism of
+  ADR-0024; its semantics (owner file, automatic break only for a verified-dead local process,
+  operator `unlock --force`) are unchanged.
+- **Context:** On Windows a file cannot be deleted while another handle has it open: a contender
+  reading the owner made `release()` fail and left a lock that could not be broken (its process
+  was alive); concurrent stale-lock breaking also had a check-then-act window.
+- **Decision:**
+  - Acquire, stale-break, release and force-release run their short check-then-act sections
+    under an exclusive OS lock (`msvcrt.locking` / `fcntl.flock`) on the persistent, never
+    deleted `pipeline.lock.mutex` (the OS drops it if the process dies). Readers (`owner()`) do
+    not take it.
+  - Transient sharing errors are retried within a bound (2 s); waiting for the mutex is bounded
+    (10 s, then `LockHeldError` / `LockReleaseError`). `LockReleaseError` (a `PermissionError`)
+    leaves the lock held so `release()` can be retried; a lock whose owner cannot be read or
+    confirmed is never deleted by `release()`; a failed owner write removes the new lock file.
+  - No new dependency; public names unchanged.
+- **Consequences:** Tested with concurrent threads and processes on Windows (no overlap, no
+  abandoned lock, valid hash chains). Each lock root now contains an empty
+  `pipeline.lock.mutex`. A program holding `pipeline.lock` open beyond the bound makes
+  `release()` raise instead of hanging.
+
+## ADR-0033 — Scheduler failure policy
+
+- **Status:** Accepted (2026-10-12, owner approval; Phase 6). Refines the scheduler part of
+  ADR-0024; the pipeline's own stage failure policy is unchanged.
+- **Context:** The pipeline turns stage failures into results, but an exception raised outside
+  the stages (store, lock release, an unexpected bug) propagated out of `Scheduler.tick()` and
+  silently ended the long-running scheduler.
+- **Decision:**
+  - `tick()` catches `Exception` only from a scheduled run; `KeyboardInterrupt`, `SystemExit`
+    and other control exceptions always propagate (Ctrl+C still stops the loop).
+  - A failed run is logged once (`operations.scheduled_run_failed`; single line, URL
+    credentials masked, at most 300 characters) and written to the heartbeat:
+    `last_run_status = RUN_ERROR`, `last_error`, `consecutive_failures`, `retry_not_before`.
+    It is never reported as a successful or no-op run.
+  - Continue only when safe: ordinary failures keep the scheduler polling, but it does not try
+    again before `poll × 2^(n−1)` seconds (capped at 1 h); a successful run resets the count.
+    It **halts** after 3 consecutive failed runs, or immediately on `LockReleaseError` or
+    `OpsStoreError`, whose lock or store state is uncertain; `ops status` then reports
+    `halted: …` until an operator restarts it.
+  - Locks: released by the pipeline's own `finally`; the scheduler never touches the lock.
+  - Lock contention vs uncertainty: an OS-mutex timeout is `LockMutexTimeoutError` (a
+    `LockHeldError` subclass): the run is still `LOCKED`, but the alert says the lock could not
+    be checked instead of claiming that another pipeline holds it.
+- **Consequences:** A transient fault no longer stops daily operations silently, and a
+  persistent one cannot loop: at most 3 attempts with growing spacing, then a visible halt.
+  Restarting a halted scheduler is a deliberate operator action.
+
+## ADR-0034 — Risk mechanism semantics: stop, drawdown lock and their events
+
+- **Status:** Accepted (2026-10-13). Owner decisions D-A1 to D-A9 (Step 8G); technical
+  decisions consolidated after the Step 8H review (Step 8I) and the Step 8J implementation
+  audit (Step 8K: equity zero, versioning, `exit_causes`, paper compatibility, implementation
+  sequence). **Implementation status: implemented in the working tree, NOT committed**
+  (2026-10-14): every decision D-A1 to D-A9, the equity-zero and undefined-return contracts,
+  the per-mechanism semantic versions and paper state schema 2 — see *Implementation record*.
+  The "Current behaviour" column below records the code BEFORE this implementation (kept as
+  the decision record). The operational upgrade of existing paper accounts is **not** done
+  (preconditions in *Paper compatibility*). Refines ADR-0020 (risk overlay)
+  for `atr_stop_3` / `drawdown_lock_20` and the paper path.
+- **Context:** The statistical review (Steps 8D/8E) moved the evaluation of the event-driven
+  overlays from a Sharpe-difference test to deterministic validation of the mechanism plus a
+  descriptive per-event report, so every mechanism rule must be unambiguous. The Step 8F
+  review found behaviours contradicting the intended semantics (D-A1 exit attribution, D-A2
+  the 20% boundary, D-A8 the lock counter), silent states (D-A3, D-A5) and unwritten
+  conventions (D-A4, D-A6, D-A7, D-A9). Step 8H found that the paper ledger records no stop
+  flag, so the `RISK_STOP_TRIGGERED` alert (`app/alerts/rules.py`) misses a stop coinciding
+  with a strategy exit and repeats on every close of a rejected exit.
+
+### Decisions
+
+| Id | Adopted behaviour | Current behaviour (code) | Change required |
+|---|---|---|---|
+| D-A1 | **Stop events are per position episode.** Five distinct notions: the stop *condition* (`close ≤ level` on a close while holding: `stop_triggered`, may repeat); the stop *activation* (the **first** condition of the episode: new `stop_activation`); the strategy's exit request (request 0 while holding); the *risk decision reason* (`reasons` / `intervention_reason`, unchanged: why the approved target differs from the request); the *order* and the confirmed *fill*. The episode state (`stop_activated`) persists until an exit fill is confirmed and is reset by an entry or exit fill; while the exit is pending or rejected, further conditions are *repeated attempts*, never new activations. A stop on the same close as a strategy exit is an activation, with **one** exit at the next open. Exit attribution goes into an **additive** field `exit_causes` (every cause present, e.g. stop and strategy); `exit_reason` keeps its current meaning, documented as the *risk decision reason* of the exit. | One exit; `stop_triggered` true and summed in `stop_triggers`; no decision reason in the coincident case; `exit_reason = strategy_or_sizing` there. The paper `Decision` has no stop field, so the coincident case leaves no trace in the ledger and raises no alert; a rejected exit re-triggers and re-alerts on every close. | `stop_activation` on decisions (research and paper), `stop_activated` in `RiskManager`; `exit_causes` on research and paper trades; event counts, the research `intervention_events` and the `RISK_STOP_TRIGGERED` alert based on activations. |
+| D-A2 | **Direct comparison with the level, no tolerance.** `lock_level = hwm × (1 − lock)` and `warning_level = hwm × (1 − warning)`, computed in float64; `LOCKED` iff `equity ≤ lock_level`, `WARNING` iff `equity ≤ warning_level` (not locked). Exact equality with the computed level activates; the next representable value above (`nextafter(level, +∞)`) does not; below activates. The rounding of the product (≤ ½ ulp) is numerical precision, not policy; no tolerance is introduced because it would move the policy threshold. The reported `drawdown` stays `equity / hwm − 1` (diagnostics, `max_drawdown`): the state is decided by the level, not by the ratio, which may read `−0.19999999999999996` on a locked close. Same class in research and paper. | `drawdown ≤ −lock` on the ratio: equity 80 with HWM 100 gives `−0.19999999999999996` and does **not** lock; the warning likewise. | `DrawdownMonitor`; boundary tests with `nextafter` for several HWM values, for both thresholds; research/paper parity on a boundary path. |
+| D-A3 | **No unprotected entry.** When the profile requires an ATR stop and ATR(T) at the decision is non-finite or ≤ 0, a request that would **open** a position is approved at 0 with reason `stop_input_undefined` (same principle as `risk_input_undefined` for sizing). An open position is unaffected (its level was fixed at entry). `fixed_pct` needs no ATR. | The entry executes; `stop_level` returns NaN; the position has no stop and nothing reports it (the `stops.py` docstring wrongly says "reported"). | Check in `RiskManager.decide`; diagnostic count; docstring and `risk-management.md` updated with the code, not before. |
+| D-A4 | `stop_lockout` is released **only** by a valid `FLAT` signal; `INSUFFICIENT_DATA` never releases it. | Compliant by construction (`INSUFFICIENT_DATA` keeps the previous request; a 0 request after an activation can only come from `FLAT`). | Tests (L → activation → I → L stays blocked; → F releases); then `strategy_state` is passed explicitly to `RiskManager.decide` (keyword-only, validated) and the lockout is released only on `FLAT`; both callers change (`app/risk/engine.py`, `app/paper/trader.py`); output-neutral (deterministic references). |
+| D-A5 | **Invalid financial state fails explicitly:** non-finite or negative equity, non-finite or ≤ 0 high-water mark → `ValueError`; never a valid-looking result, and a failure never yields an artifact marked `complete`. Equity **equal to zero is valid** at a close and locks; every quantity that divides by equity is defined for it (see *Equity zero*). | Silent: NaN equity makes every comparison false, the state stays `NORMAL`, `max(hwm, NaN)` keeps the HWM, the run continues. Equity 0 is undefined: the research engine's `position = shares·close/equity` yields NaN (numpy), the paper trader's exposure raises `ZeroDivisionError` (Python), the session monitor divides by the previous equity. The paper state stores NaN as `null` and reads it back as NaN. | Checks in `DrawdownMonitor.update`, `SessionMonitor.update` and the close step of both engines; the equity-zero definitions below; in paper the exception marks the store broken (existing fail-closed path), before any NaN could be persisted. |
+| D-A6 | A further fall during the cooldown neither extends nor restarts the lock in this version. The lock covers exactly `cooldown_sessions` decisions **including** the triggering close (21 for `drawdown_lock_20`); the next close unlocks (`NORMAL`), resets the HWM to the current equity (even if below the previous HWM) and may re-enter at the following open. **Exception, equity 0 at that close** (D-A5): the HWM is **not** reset to 0 — the last positive HWM is kept, so the drawdown stays −1 — and the close is judged by the threshold rule like any other (−1 ≤ −`lock`): a new lock starts; the end of a cooldown never allows a re-entry by itself, and equity 0 allows no entry or increase. | Compliant (the threshold is not re-evaluated while `lock_remaining > 0`). | Tests counting the locked decisions, the unlock close and the re-entry; deeper fall during the cooldown. |
+| D-A7 | Every simulation window has its own risk state: flat, initial capital, HWM = initial capital, no stop, no lockout, no lock. Indicators and strategy states are warmed up causally on bars ≤ each decision (bars before the window allowed, none after). If the state at the bar before the window is `LONG`, the first open of the window is an entry with its own stop (D-A3). | Compliant (`simulate` builds cash = initial, shares = 0 and a new `RiskManager` per run). | Tests: window starting in a LONG regime; two runs in sequence equal each run alone. |
+| D-A8 | **Separate counters:** `stop_activations` (D-A1), `drawdown_lock_events` (transitions of the **drawdown** monitor into `LOCKED` only) and `session_lock_events`. The existing `stop_triggers` keeps counting conditions. | `drawdown_lock_events` counts transitions of the combined `risk_state` (drawdown **or** session lock); no activation or session counter. | Per-session drawdown-monitor state in the equity frame; the new counters (additive columns). |
+| D-A9 | **Paper:** a rejected or unexecuted exit is not a fill and clears no risk state (stop level, `stop_activated`, lockout, open trade, current target). The persisted paper state has an explicit schema version; the risk state gains `stop_activated` (state schema 2). A schema-1 state loads with `stop_activated = false` only when the profile has no stop; with an active stop it is **refused** (`StateError`) — the episode state is never inferred. | `on_fill` runs only on a confirmed fill (compliant for the existing fields); state schema 1 with a strict key set; no episode field. | `app/paper/state.py` schema 2 with the schema-1 loader rule; paper tests (rejected exit; coincident stop; schema-1 loads). |
+
+### Equity zero (D-A5)
+
+Equity equal to zero at a close is valid (it is not reachable under the accounting invariants
+— positive validated prices, cash ≥ −tolerance — but the rule is defined, not assumed away):
+
+- **Drawdown monitor:** `0 ≤ lock_level`, so the account locks (D-A2 rule); no division.
+  At the end of a cooldown with equity 0 the HWM is not reset to 0 (which would make the next
+  close an invalid state): the last positive HWM is kept and the close relocks (see D-A6).
+- **No division by zero anywhere:** no quantity may become NaN or infinite, and no
+  `ZeroDivisionError` may escape unhandled.
+- **Normalised exposure / position** (research engine row, paper snapshot and trader): `0`
+  when equity is 0 (there is nothing to normalise; holdings are then also worth 0).
+- **No new entry:** with equity 0 no entry or increase is authorised (the approved target is
+  not raised above the current one; a buy cannot be sized from zero equity anyway).
+  Implemented with the reason `zero_equity_no_increase`; an open position is kept and an
+  exit stays possible.
+- **Session monitor:** when the *previous* equity is 0, the session loss is **not computed**
+  (no division and no substitute number). The monitor keeps its protective state and blocks
+  increases (it does not release or shorten an active session lock, and it treats the session
+  as blocking increases). Telemetry must distinguish "not computable" from a loss of 0%.
+- **Current limitation of the schema:** the session loss is returned by
+  `SessionMonitor.update` and discarded; it is not recorded in decisions, equity rows,
+  artifacts or the paper state, so no field can represent "not computable" today.
+  Implemented (step 4a): `SessionMonitor.update` returns `float | None` (`None` = not
+  computable); no session-loss telemetry is recorded. If it ever is, it is an additive,
+  nullable field (`null`, never a number) with its meaning documented. No numeric value replaces an undefined percentage.
+- **Daily return after a zero-equity close:** `daily_return(t) = equity(t) / equity(t−1) − 1`
+  is **undefined** when `equity(t−1) = 0` — and for every following session while the equity
+  stays 0. It is not computed (no division) and is represented as **null** (`None` in Python
+  records, `null` in JSON, an explicit null token in CSV), never as 0, NaN, ±inf or an
+  estimate. A close that *reaches* 0 from a positive previous equity has the defined return
+  −1. The risk protection stays in force meanwhile (locked; no entry or increase until the
+  risk conditions allow a release).
+- **Consumers of daily returns — handling (implemented in step 4b):**
+  - `returns_from_equity` (`app/backtest/metrics.py`) keeps its behaviour and serves the
+    Phase 8 backtester, which is outside ADR-0034 (same accounting invariants). The risk and
+    paper engines use `defined_returns`: no division where equity(t−1) = 0 (`pd.NA` there),
+    and the same float64 value as `returns_from_equity` everywhere else (bit-identical).
+  - In memory, a `float64` column cannot tell a null from a NaN. Decided and implemented: the
+    `daily_return` column of `RiskRun.equity` / `PaperRun.equity` is a nullable `Float64`
+    (`pd.NA` for undefined). Conversion to a plain float array is **not** a safe guard
+    (`DataFrame.to_numpy(float64)` turns `pd.NA` into NaN silently), so every consumer checks
+    explicitly (`undefined_mask`; a float64 NaN is non-finite, not undefined).
+  - Run metrics (`all_metrics`) and the bootstrap comparisons (`diagnostics._compare`,
+    `matrix_metrics`): an undefined return is never converted to 0 and never enters a
+    computation as a valid return. A series containing one has its return-based metrics
+    reported as undefined (null, with the reason) and the comparisons involving it are not
+    computed ("not testable"); a series is never silently shortened to make it computable.
+    Implemented: `annualized_volatility`, `sharpe` and `sortino` (and `gross_sharpe` for the
+    gross series) are `None`, with `undefined_returns` and `return_metrics_note`; equity-based
+    metrics (cumulative return, CAGR, drawdown) stay computed. `risk_table.csv` appends
+    `annualized_volatility_status`, `sharpe_status` and `sortino_status` (step 4b.1), set from
+    the calculation layer, never from an empty cell: `defined` (a finite value, zero
+    included), `undefined_returns` (`None`: the series has undefined returns) or
+    `undefined_nan` (NaN in the metric's own domain: fewer than 2 sessions, zero standard
+    deviation, no negative return); one column per metric because these causes are
+    independent (e.g. Sortino NaN with Sharpe defined). In `risk_comparisons.csv`, an undefined
+    control makes every comparison of that strategy not testable, an undefined overlay only
+    its own; the other comparisons are computed on the full sessions, bit-identical to a
+    computation without the undefined series. Every row keeps its columns (NaN estimate and
+    interval, `n_finite` 0, empty `estimate_in_interval`, `note` starting `not testable`).
+  - `daily_returns.csv`: schema `risk-daily-returns/1` cannot represent a null (its fields
+    are finite numbers or the tokens `nan`, `inf`, `-inf`). Implemented (step 4b): new runs
+    write schema `risk-daily-returns/2`, same columns, with the explicit token `null` in
+    `daily_return` for an undefined return, a convention text that says so and a per-series
+    `undefined_returns` count in the manifest (`non_finite_returns` counts `nan`/`inf` only).
+    The run verifier accepts a null only where the previous recorded equity is 0, refuses a
+    number where it is 0, checks the counts, and skips nulls in the equity/return consistency
+    check. `load_returns_matrix` refuses a series containing a null (`ReturnsMatrixError`) —
+    no dropping, no imputation; complete series load as float64 as before. Schema `/1` files
+    stay valid under their own contract (their convention; a `null` in a `/1` file is
+    refused).
+  - Statistical use (protocol `TI-STAT-RISK`): a window containing an undefined return makes
+    the affected test *not testable* (an extension of validity condition 5, "no non-finite
+    value"); sessions are never dropped to make a test testable.
+- **Invalid states** (non-finite or negative equity, non-finite or ≤ 0 HWM) raise
+  `ValueError`; a run that raises is `failed`, never `complete`.
+
+### Versioning and fingerprints
+
+- `RISK_VERSION` (`1.0.0`) and `PAPER_VERSION` (`1.0.0`) stay **unchanged** in this
+  implementation, unless later evidence shows a change is indispensable (then it is proposed,
+  not made silently).
+- **Per-mechanism semantic versions** (`STOP_SEMANTICS`, `DRAWDOWN_SEMANTICS`,
+  `SESSION_SEMANTICS`) are introduced. The payloads of `RiskConfig.fingerprint` and
+  `PaperConfig.fingerprint` gain a `semantics` entry with the versions of the **enabled**
+  mechanisms only, and only when that set is not empty.
+- **What bumps a version:** D-A2 bumps `DRAWDOWN_SEMANTICS`; D-A3 bumps `STOP_SEMANTICS`.
+  D-A1, D-A4 and D-A8 change no decision or fill (record schemas only). D-A5 bumps nothing
+  **only if** (1) every finite, valid input gives identical decisions, fills and equity before
+  and after (shown by the deterministic references of the implementation sequence) and
+  (2) artifacts stay unambiguously identified by commit and `git_dirty`.
+- **Acceptance criteria, to be confirmed by tests** (values computed from the current code;
+  equal to the recorded research manifests and to the existing paper ledger):
+
+  | Item | Value |
+  |---|---|
+  | research fingerprint of `control_no_overlay` | `3d5570e854d0e703` |
+  | paper fingerprint of the control configuration | `411f10ae26cb281f` |
+  | paper `account_id` (`sma_trend`, `1.0.0`, `SPY`, `1d`, control) | `3f95a6964b8e` |
+
+  Expected to change: `drawdown_lock_20` and `atr_stop_3` (research and paper fingerprints,
+  paper `account_id`). Expected unchanged: `control_no_overlay`, `fixed_fraction_50`,
+  `volatility_target_10`, `atr_risk_1pct`.
+- **If a compatibility criterion fails** (a control value changes, or D-A5 is not shown to be
+  output-neutral), the implementation **stops** and a resolution is proposed; the control's
+  identity is never changed silently. (A per-mechanism version cannot express a change that
+  affects the control, which has no enabled mechanism; such a change needs an explicit
+  decision.)
+- Reuse of incompatible state is refused by existing checks: `open_account` recomputes the
+  `account_id` from the current configuration and refuses a mismatching directory; the state
+  loader and `PaperTrader` refuse a different `config_fingerprint`. Their messages ("not one
+  of the pre-declared scenarios", `PAPER_STATE_CORRUPT`) should name a semantic-version
+  mismatch.
+- Run manifests keep the fingerprints they were written with; the run verifier compares
+  against recorded values. Research manifests record the semantic versions (additive).
+
+### `exit_causes`
+
+- **Canonical string**: causes unique, sorted alphabetically, joined by `+` (e.g.
+  `stop+strategy`, `drawdown_lock+stop`). Independent of evaluation order; CSV-friendly.
+- **Closed vocabulary**: `drawdown_lock`, `session_lock` (reserved: while the session lock
+  only blocks increases it can never cause an exit), `sizing` (the sized exposure is 0 for a
+  positive request, e.g. `risk_input_undefined`), `stop`, `strategy` (the strategy requested 0).
+- Never empty on an exit. A validator rejects unknown, repeated or non-canonically ordered
+  causes.
+- Derived from the decision that produced the exit order. `exit_reason` keeps its current
+  meaning (the risk decision reason of the exit).
+- **Pending stop exit vs new attempt (audit fix 1).** A decision that (re)produces an exit
+  order while the stop episode is activated and its exit is not yet confirmed (pending or
+  rejected) keeps `stop` among its causes, together with the causes of that new attempt
+  (e.g. `stop+strategy` when the strategy turned FLAT meanwhile, even on a close above the
+  level). The stop stops being a cause only when the confirmed exit (or entry) fill ends the
+  episode; `zero_equity_no_increase` is never an exit cause.
+
+### Paper compatibility
+
+- The persisted paper state moves to **schema 2**, adding `stop_activated` (and the exit-cause
+  information the pending instruction needs).
+- A **schema-1** state loads only when the profile has **no stop**, with
+  `stop_activated = false`; with an active stop it is **refused** (`StateError`) — never
+  inferred. The next write stores schema 2.
+- A rejected or unexecuted exit is not a fill and does not clear the stop state.
+- The `RISK_STOP_TRIGGERED` alert uses `stop_activation` for new ledger records and keeps the
+  current rule for records without it, so recomputing alerts over the existing history does
+  not create new historical alerts.
+- **Operational upgrades** require that no uncommitted ledger tail exists (the state's
+  sequence equals the ledger length): crash recovery compares the tail with the reprocessed
+  session, and a tail written by older code would not match.
+- **Implemented reading rules** (`app/paper/state.py`): every write is schema 2
+  (`risk.stop_activated`, `pending.exit_causes`). A schema-1 state loads with
+  `stop_activated = false` when that is determined — the profile has no stop, or no position
+  is open (no shares, no stop level, no open round trip) — and is **refused** when the profile
+  has a stop and a position is open. The causes of a pending schema-1 exit are derived only
+  where the decision rules determine them (request 0 → `strategy`, plus `drawdown_lock` when
+  the stored drawdown state is LOCKED with `force_flat`; a positive request without a drawdown
+  lock → `sizing`); a positive request under a drawdown lock is ambiguous and refused. These
+  rules are checked before the configuration fingerprint, so a refusal names its reason.
+- **Identity conflicts are explicit.** Neither the paper CLI nor the dashboard creates an
+  account silently next to an account of the same strategy, risk scenario, instrument and
+  timeframe under another account id (an earlier configuration, semantic version or strategy
+  version): creating it requires an explicit decision about the existing account(s), which
+  are named and not opened or changed. Both use the store's single manifest scan
+  (`scan_accounts`, direct children of the account root only). The CLI `run` refuses with exit
+  code 2 (`conflicting_accounts`); `status` is read-only and never creates an account. The
+  dashboard's `paper_create_account` raises `AccountError` before anything is written, and
+  ALSO refuses when an account directory has a manifest that cannot be read (its identity is
+  unknown, never assumed); the CLI keeps its earlier behaviour and ignores such directories —
+  a deliberate difference between the two paths. The alert monitor reports such an intact account as
+  `PAPER_ACCOUNT_INCOMPATIBLE`, distinct from `PAPER_STATE_CORRUPT` (invalid or unreadable
+  state) and `PAPER_LEDGER_VERIFICATION_FAILED`.
+- **Not executed:** no existing (operational) paper account was opened or converted. Before
+  any conversion: stop the scheduler, back up the account directories, confirm that no
+  uncommitted ledger tail exists, and note that accounts of `drawdown_lock_20` or
+  `atr_stop_3` (new `account_id`) are not reopened under the new semantics (their directories
+  no longer match a pre-declared configuration). The control account's identity is unchanged
+  and its schema-1 state loads under the rules above.
+
+### Implementation record (working tree, not committed)
+
+| Item | Implemented as | Evidence (unit tests) |
+|---|---|---|
+| D-A1 | `RiskManager.stop_activated` (set by the first condition, reset only by a confirmed entry or exit fill); `RiskDecision.stop_activation` and `exit_causes` (each cause evaluated on its own, not from the sequential reasons: `strategy` = request 0, `sizing` = sized 0 for a positive request, `stop` = condition at this close or active lockout, `drawdown_lock` = drawdown monitor LOCKED with `force_flat`; validated, never empty on an exit); research decisions and trades, paper `Decision`, `Instruction` and trades carry them (appended); `exit_reason` unchanged; `RISK_STOP_TRIGGERED` follows `stop_activation` on records that have it, the former rule otherwise. | `test_adr0034_mechanisms.py` (D-A1 group), `test_state_schema2.py`, step-0 `test_current_paper_rejected_exit` (one alert per episode) |
+| D-A2 | `DrawdownMonitor`: LOCKED iff `equity <= hwm × (1 − lock)`, WARNING iff `equity <= hwm × (1 − warning)` (`lock_level`, `warning_level`); the reported drawdown stays the ratio. | `nextafter` boundaries for 5 HWMs and both thresholds; research/paper parity on the boundary path |
+| D-A3 | `RiskManager.decide`: with an ATR stop, an entry (current target 0) whose decision ATR is NaN, ±inf, 0 or negative is approved at 0 with `stop_input_undefined`; an open position is unaffected; `fixed_pct` and no-stop profiles need no ATR. | D-A3 group; synthetic reference: the only D-A3 differences are entries refused during the ATR14 warm-up |
+| D-A4 | `RiskManager.decide(..., strategy_state=...)` required, keyword-only, validated (vocabulary; LONG ⇒ request > 0; FLAT ⇒ request 0); only FLAT releases the stop lockout; both engines pass the state. | D-A4 group; output-neutral on the synthetic reference (0 differences) |
+| D-A5 / D-A6 | Steps 4a, 4a-fix, 4b, 4b.1 (see *Equity zero*). | `test_da5_invalid_state.py`, `test_undefined_returns.py`, `test_risk_table_status.py` |
+| D-A7 | Unchanged code; tests, including the paper window start (ADR-0035). | step-1 tests, `test_window_start.py` |
+| D-A8 | Equity frame appends `drawdown_state` and `session_locked`; `drawdown_lock_events` = transitions of the drawdown monitor into LOCKED; `stop_activations` and `session_lock_events` appended; `stop_triggers` still counts conditions; `intervention_events` uses `stop_activations` and `session_lock_events`. | D-A8 group; the pre-declared profiles' existing counters are unchanged (no session lock) |
+| D-A9 | Paper state schema 2 (see *Paper compatibility*). | `test_state_schema2.py`, step-1 fixture tests |
+| Versions | `STOP_SEMANTICS` 2.0.0 (D-A3), `DRAWDOWN_SEMANTICS` 2.0.0 (D-A2), `SESSION_SEMANTICS` 1.0.0 (unchanged for valid inputs); a `semantics` entry in the risk and paper fingerprint payloads only for enabled mechanisms; research manifests record them per scenario; `RISK_VERSION` and `PAPER_VERSION` unchanged. | identity tests (step 1), payload tests |
+
+**Fingerprints and paper `account_id` (`sma_trend`, `1.0.0`, `SPY`, `1d`), before → after:**
+
+| Profile | Research | Paper | `account_id` |
+|---|---|---|---|
+| `control_no_overlay`, `fixed_fraction_50`, `volatility_target_10`, `atr_risk_1pct` | unchanged (control `3d5570e854d0e703`) | unchanged (control `411f10ae26cb281f`) | unchanged (control `3f95a6964b8e`) |
+| `drawdown_lock_20` | `46967e83f8a3cbc8` → `989fe7971a707205` | `def3947a77643adc` → `5dc60575258be11f` | `1ecfb5f0843c` → `4d46afd9443d` |
+| `atr_stop_3` | `f66a5a3d801afdc8` → `99566717f29b5310` | `3eb9676335813ff5` → `b48a0c434b4de2ef` | `7ca091f382ce` → `62d66e3174d3` |
+
+**Step-0 references.** The `BASELINE` constant is not rewritten (it remains the pre-ADR
+record). The intended changes are recorded next to it (`ADR0034_INTENDED`) and asserted to
+differ from it: `drawdown_exact_threshold` (D-A2, all four frames) and `paper_rejected_exit`
+(identifiers only, through the new `atr_stop_3` paper identity; with the pre-ADR identity
+substituted, every frame equals its baseline). Every other frame of every scenario is
+unchanged. On the synthetic reference set (216 research and paper runs, frozen columns and
+fields only), the only differences are 10 `atr_stop_3` runs starting at session 0, all
+explained by D-A3 (entries refused only where the decision ATR is undefined).
+
+### Implementation sequence (proposed, not executed)
+
+Each step has its own commit, with the full unit suite, Ruff and mypy; any reference or
+acceptance difference not listed as intended reverts that step.
+
+1. Deterministic references of decisions, fills and equity — synthetic scenarios and isolated
+   tests only, recorded with the current code.
+2. Tests fixing the control's research fingerprint, paper fingerprint and `account_id`.
+3. Tests for the rules already met: lockout (D-A4), cooldown (D-A6), windows (D-A7), paper
+   state on rejected exits (D-A9).
+4. D-A5, including equity zero.
+5. Per-mechanism semantic versions and the drawdown thresholds (D-A2).
+6. ATR validation and refusal of new entries (D-A3).
+7. Stop events per episode, `exit_causes` and separate counters (D-A1, D-A8).
+8. Paper state schema 2 and alert compatibility.
+9. `strategy_state` as an explicit argument of `RiskManager.decide` (D-A4).
+10. Final documentation, only after every test passes.
+
+### Consequences
+
+- Code changes: D-A1, D-A2, D-A3, D-A5, D-A8, D-A9 (state schema) and the fingerprint payloads.
+  Test-only: D-A6, D-A7. D-A4: tests, then the explicit `strategy_state` argument.
+- Additive record changes: `stop_activation` on decisions (research and paper ledger records;
+  old ledger records are unchanged, so the hash chain is unaffected), `exit_causes` on trades,
+  new diagnostics counters. Ledger readers access fields by key; their tolerance to the new
+  fields must be confirmed by tests.
+- Documentation to update with the code, not before: `docs/risk-management.md` (stops,
+  drawdown lock, events), `docs/paper-trading.md` (state schema 2) and the `stops.py`
+  docstring (D-A3).
+
+### Open questions
+
+- Whether the D-A5 no-bump conditions hold — decided by the deterministic references, not
+  assumed. Evidence so far (steps 4a, 4b): the 11 step-0 baselines and a set of 216
+  synthetic research and paper runs are unchanged, and the bootstrap comparisons are
+  bit-identical; no version was bumped.
+- ~~Whether ledger readers tolerate the new decision fields~~ — confirmed by tests (alerts,
+  dashboard ledger tables, broker `expected_quantity` read the new records).
+- Whether session-loss telemetry is to be recorded at all (see *Equity zero*) — not
+  recorded (decision F of the step 4a authorisation); still open for a later decision.
+- Whether the historical SPY research results in `docs/risk-management.md` are recomputed
+  under the new semantics — not done (no operational backtest was authorised).
+- ~~In-memory representation of an undefined daily return~~ — resolved in step 4b:
+  nullable `Float64` with `pd.NA`.
+
+### Revision history
+
+| Date | Step | Change |
+|---|---|---|
+| 2026-10-13 | 8G | ADR created: owner decisions D-A1 to D-A9 with current behaviour and required changes. |
+| 2026-10-13 | 8I | Technical decisions consolidated: stop events per episode with `stop_activation` and additive `exit_causes`; D-A2 by direct comparison with the level (the earlier proposal of a `1e-12` tolerance on the ratio is withdrawn) and applied to the warning; invalid-state rules completed (negative equity, HWM ≤ 0, zero equity valid); separate counters; paper state schema 2 without inference; per-mechanism semantic versions (the earlier plan to bump `RISK_VERSION` is withdrawn); conditional D-A5 no-bump rule. |
+| 2026-10-13 | 8K | Equity zero defined (valid, locks; exposure 0; no new entry; session loss not computed, protection kept; schema limitation and minimal change documented); `RISK_VERSION`/`PAPER_VERSION` unchanged; control acceptance values; stop-on-failure rule; `exit_causes` vocabulary and canonical form; paper schema 2 and upgrade precondition; implementation sequence (proposed). Closed: the open questions on `exit_causes`, the global `RISK_VERSION` and D-A4 (explicit `strategy_state`). |
+| 2026-10-14 | 1-prep | Daily return after a zero-equity close specified (undefined, null, never 0/NaN/inf/estimate; −1 when reaching 0; protection kept); consumers' required handling; `daily_returns.csv` cannot represent null today — minimal change documented (schema `risk-daily-returns/2`, not implemented); statistical tests with an undefined return are not testable. No accepted decision changed. |
+| 2026-10-14 | 4a-fix | D-A5 × D-A6 contradiction resolved: at the end of a drawdown cooldown with equity 0 the HWM is not reset to 0 (last positive HWM kept, drawdown −1) and the close relocks under the threshold rule; no re-entry from the end of the cooldown itself. Found in step 4a (a zero HWM made the next close fail). Positive-equity behaviour unchanged. |
+| 2026-10-14 | 4b/4b.1 | Status updated (implemented in the working tree, not committed; pending items listed). Recorded as implemented: `zero_equity_no_increase` (approved name), `SessionMonitor.update` → `float | None`, `defined_returns` with nullable `Float64`, undefined return-based metrics, not-testable comparisons, `risk-daily-returns/2` (`null`, `undefined_returns`, verifier and loader rules, `/1` kept), and the `<metric>_status` columns of `risk_table.csv` (`defined` / `undefined_returns` / `undefined_nan`, one per metric). Open question on the in-memory representation closed. No decision changed. |
+| 2026-10-14 | final | Implementation completed in the working tree (not committed): D-A1 (`stop_activated`, `stop_activation`, `exit_causes`, alert per activation), D-A2 (level comparison), D-A3 (`stop_input_undefined`), D-A4 (required `strategy_state`, FLAT-only release), D-A8 (monitor columns, separate counters, activation-based events), paper state schema 2 with the schema-1 reading rules, per-mechanism semantic versions (stop and drawdown 2.0.0, session 1.0.0) and the resulting identities. Implementation record, fingerprints before/after and the not-executed operational upgrade added. No decision changed. |
+| 2026-10-14 | audit-fixes | (1) `stop` stays an exit cause while an activated stop's exit is unconfirmed; (2) the paper CLI refuses to create an account next to one of the same strategy, scenario, instrument and timeframe under another identity, and `status` is read-only; (3) alerts classify an intact state of another configuration / semantic version / schema as `PAPER_ACCOUNT_INCOMPATIBLE` (`StateCompatibilityError`), separate from corruption; (4) `max_position_notional` must exceed 1e-12 × the initial equity (refused at `RiskManager` construction), with an explicit error if the equity later grows past it. No decision changed. |
+| 2026-10-15 | dashboard | The dashboard's `paper_create_account` refuses (before writing anything) to create an account next to one of the same strategy, scenario, instrument and timeframe under another identity, and when an account manifest cannot be read; the single manifest scan is `scan_accounts`, with `conflicting_accounts` (CLI) returning its conflicts only. The CLI keeps ignoring unreadable manifests (deliberate difference). No decision changed. |
+
+## ADR-0035 — Paper window start: decision at the close before `start` (convention A)
+
+- **Status:** Accepted (2026-10-14). Convention A (A2) and the indicative dashboard
+  classification (D1) are **implemented in the working tree only; not yet committed** (no
+  commit contains them; integration in a commit is pending). Files:
+  - A2 (paper trading): `app/paper/trader.py` (`PaperTrader.prime`, `split_at_start`),
+    `app/paper/engine.py`, `app/paper/store.py`, `app/paper/cli.py`,
+    `app/dashboard/services/paper.py` (`paper_process_sessions`); tests
+    `tests/unit/paper/test_window_start.py` and the updated window-start test in
+    `tests/unit/risk/test_adr0034_preservation.py`.
+  - D1 (dashboard): `app/dashboard/services/paper.py` (`classify_snapshots`,
+    `ledger_tables`), `app/dashboard/ui/pages.py` (caption of the *Account snapshots* tab);
+    tests `tests/unit/dashboard/test_snapshot_types.py`.
+
+  Refines ADR-0021 for new accounts with a `start`; ADR-0021 is otherwise unchanged.
+- **Context:** The Step 1 audit of ADR-0034 found that a paper window and a research window
+  (`RiskOverlay.run(start_index=k)`, ADR-0034 D-A7) with the same `start` diverged. The paper
+  replay, CLI `run --start` and the dashboard's `paper_process_sessions` dropped the sessions
+  before `start` and began with a requested target of 0, so the first decision was taken at the
+  close of `start` and a LONG regime entered one session late (three sessions late in the
+  audited case with `INSUFFICIENT_DATA` in the first two window sessions). The research engine decides at the close of
+  `start−1` and enters at the open of `start`.
+- **Decision (convention A, ledger representation A2):**
+  1. `start` is the first session included in the results.
+  2. When a session exists before `start`, the decision at its close may execute at the open of
+     `start`.
+  3. The history before `start` rebuilds the requested target causally (LONG 1, FLAT 0,
+     `INSUFFICIENT_DATA` keeps the previous request, 0 before any valid state); nothing after
+     `start−1` is read.
+  4. The window starts with the initial capital and no position, cost basis or stop. A LONG
+     request at `start−1` is a new entry at the open of `start`, with the normal costs and its
+     own stop (ATR of the `start−1` decision).
+  5. The `start−1` decision is made with equity equal to the initial capital and does **not**
+     update the risk monitors (no valuation close in the window). It creates no result row.
+  6. It is recorded with the existing schemas: a `decision` event and a **reference snapshot**
+     (flat, cash = equity = initial capital, marked at the `start−1` close, with the pending
+     kind just created). The pair keeps the per-session ledger invariant (decision, snapshot),
+     so every ledger reader (broker intent and reconciliation, alerts, operations) works
+     unchanged. The reference snapshot exists for traceability and execution only.
+  7. Results start at `start`: the replay's equity, daily returns, metrics, portfolio and trades
+     exclude `start−1`; `decisions` includes the `start−1` decision, as the research
+     engine's decision frame does. `session_seq` / `sessions_processed` count window sessions
+     only.
+  8. Without a session before `start`, there is no previous decision (unchanged boundary
+     behaviour). If the session immediately before `start` is missing from the data while
+     window sessions exist, the window start fails (`ValueError`), as the research engine does.
+     In incremental mode, the `start−1` decision is only taken once that session is available
+     (an earlier last session means nothing is processed yet).
+  9. Only new accounts are affected: an account that has processed any session ignores `start`;
+     no existing account, ledger or state changes. Ledger and state schemas, `app/broker/`,
+     configuration fingerprints, account ids and the ADR-0034 Step 0 baselines are unchanged.
+- **Consequences:**
+  - A paper window equals the research window with the same `start` (sessions, fill prices,
+    equity within 1e-6, decisions, risk states), tested for the control, `atr_stop_3` and
+    `drawdown_lock_20` profiles, with and without costs. A replay with `start` equals an
+    incremental account with the same `start` (ledger events, IDs and hashes), including
+    restarts and a crash after the reference events.
+  - The ledger of an account started with `start` is identical (including hashes) to that of a
+    new account whose first session is `start−1` and that processes the same sessions. Only the
+    state's `session_seq` differs. The records themselves do not mark a snapshot as a reference
+    (see *Open questions*).
+- **Dashboard classification (D1, implemented):** the *Account snapshots* table shows a
+  display-only session type computed by `classify_snapshots` (`app/dashboard/services/paper.py`)
+  from the whole committed ledger and the account's `sessions_processed`: `trade` only with a
+  `fill` event in the same session; `no trade` without one (an order may still have been
+  rejected); `window-start reference (indicative)` for an account's first snapshot without a
+  fill when the snapshot count is `sessions_processed + 1` and the snapshot is flat at the
+  initial capital; `indeterminate` when the data do not allow a classification. Nothing is
+  persisted; no schema, ledger hash, fingerprint or baseline changes. D1 is an **indicative**
+  classification: it does **not** identify the reference snapshot per record with certainty
+  (the same ledger is shown as `no trade` for an account whose first session is `start−1`).
+  The running Streamlit page has not been validated (service-level tests only).
+- **Open questions:** A reference snapshot still cannot be told apart **per record** from a
+  normal flat session that schedules an entry. The options to mark it per record (D2 additive
+  snapshot field, D3 distinct `snapshot_id`, D4 account-level record in the state or manifest)
+  are described in `docs/paper-trading.md` (*Window start*); they are **not implemented and
+  not approved**.
+
+### Revision history
+
+| Date | Step | Change |
+|---|---|---|
+| 2026-10-14 | A2 | ADR created: convention A with the decision plus reference snapshot representation (A2); results start at `start`; boundary, missing-session and existing-account rules; snapshot distinction left open. |
+| 2026-10-14 | D1 | Dashboard classification D1 recorded as implemented (indicative, from the whole committed ledger and `sessions_processed`; not a per-record identification); D2–D4 remain not implemented and not approved. The window-start decision is unchanged. |
+
 ## ADR-0008 — Local Git now, private GitHub remote later
 
 - **Status:** Accepted (2026-10-07)
@@ -510,12 +1072,195 @@ acceptance; they are superseded by a new ADR.
   formats; `.env.example` documents configuration. The private GitHub remote is added by the owner
   (instructions in README). CI is deferred.
 
+## ADR-0036 — Forex product scope, environments and agent architecture
+
+- **Status:** Accepted (2026-10-17). Implemented on branch `feature/fx-desktop-platform`
+  (`app/fx`). The SPY research platform is unchanged and kept alongside.
+- **Context:** The owner pivoted the project to a personal Forex trading platform with five
+  agents, a central orchestrator and a central risk manager, intended to become a product that
+  can later be sold or offered by subscription. The existing paper model (long-only, exposure in
+  [0, 1], one instrument, daily bars) cannot represent FX (shorts, margin, bid/ask, several pairs,
+  account-currency conversion, a 24/5 calendar).
+- **Decision:**
+  1. New packages: `app/fx` (domain, agents, risk, orchestrator, simulator, store), `app/engine`
+     (process + protocol, ADR-0037), `app/desktop` (UI). Existing packages are reused only for
+     pure functions (`app.indicators`) and the real-money guard (`app.core.safety`).
+  2. **Environments** are explicit and never interchangeable: `SIMULATION` (local synthetic
+     market + simulated broker), `DEMO` (a broker's practice account, no real money) and `REAL`.
+     `REAL` exists only as an identifier: `require_executable(REAL)` calls
+     `refuse_real_money_order()` (ADR-0006) and the configuration refuses it. No adapter falls
+     back from one environment to another. A DEMO adapter must trade LIVE-origin prices only.
+  3. **Ports** (`app/fx/ports.py`): `MarketDataProvider`, `AccountProvider`, `PositionProvider`,
+     `OrderExecutionProvider` (idempotent by client order id; `ExecutionError(ambiguous=...)`),
+     `TradingCalendar`, plus declared `Capabilities`.
+  4. **Every price carries its origin** (`SYNTHETIC`, `HISTORICAL`, `DELAYED`, `LIVE`); the UI
+     labels synthetic prices on every screen.
+  5. **Agents** propose, they never trade: Trend Following (EMA 20/50 + slow-EMA slope), Momentum
+     (RSI/ROC/MACD agreement), Mean Reversion (Bollinger + RSI), Volatility/Regime filter
+     (efficiency ratio, ATR percentile, spread/ATR; can veto entries), Portfolio Coordinator
+     (regime-weighted consensus, conflict = no trade, currency-diversification penalty, at most
+     one new entry per cycle). Agents read closed bars only (tested for look-ahead).
+     *Revision 2026-10-18 (agents v2):* the agent logic is a set of vectorised, causal signal
+     functions (`app/fx/agents/signals.py`) used by both the research backtests and the live
+     agents: Trend joins an established trend on a pullback to EMA(20) with an EMA(200)
+     context; Momentum trades range breakouts with expanding ATR and non-exhausted RSI; Mean
+     Reversion fades a confirmed rejection of the Bollinger band only in a ranging market;
+     the Regime filter also vetoes illiquid hours and the rollover window. Every trade has an
+     ATR stop, a target with RR >= 1.2 and a time stop; positions go flat before the weekend.
+     The Coordinator v2 lets only APPROVED agents open (`app/fx/agents/calibrated.py`,
+     pre-registered out-of-sample rule, docs/fx-agent-validation.md), resolves conflicts (no
+     trade), exits only on the owner's time stop, and orders entries by score with crowded
+     currencies last (scores are never lowered).
+  6. **Scores** are heuristic confidences in [0, 1], never probabilities; the UI says so.
+  7. **Order lifecycle** (`app/fx/lifecycle.py`): SIGNAL → PROPOSAL → AUTHORIZED | REFUSED →
+     SENT → ACCEPTED | REJECTED | UNKNOWN → PARTIALLY_FILLED → FILLED (+ CANCELLED, EXPIRED).
+     Each step is journaled; an UNKNOWN (ambiguous) send is resolved by looking the order up by
+     client order id, never by resending. The intent is written to disk (SENT) before the venue
+     sees it, and the outcome is saved immediately after.
+     *Revision 2026-10-18 (review fixes E3, M1, M6):* every state change goes through
+     `lifecycle.transition` (`Intent.move`); terminal states have no way out. An empty lookup
+     proves absence only if the adapter declares `authoritative_order_lookup` (the in-process
+     simulator does); otherwise the order stays UNKNOWN, new entries on its pair are refused,
+     lookups are retried on each tick up to `ReconcilePolicy` (5 attempts / 5 min of engine
+     clock) and then the kill switch is engaged with an `order_unresolved` alert, the order
+     staying UNKNOWN. Orders still unknown after a restart block every new entry until
+     reconciled. A partial fill whose remainder is cancelled ends CANCELLED with
+     `filled_units > 0` (PARTIALLY_FILLED is reserved for a working order); fill quantities
+     are the venue's cumulative totals, so repeated reports never double-count.
+  8. **Accounting**: netting per pair (no hedging), P&L in the quote currency converted to the
+     account currency (direct, inverse or USD cross), unrealized marked at the liquidation side,
+     margin = notional / venue leverage. Swap/financing is not modelled yet (limitation).
+  9. **Persistence**: SQLite per data directory; hash-chained journal + state documents written
+     in one transaction (market, broker, risk, orchestrator). A restart recovers positions,
+     daily counters, locks, the kill switch and in-flight intents.
+- **Provisional defaults (configurable):** account EUR, capital 10 000, nine major pairs,
+  decisions on M15 bars, venue leverage 30 (ESMA retail majors).
+- **Not done yet:** DEMO broker adapter and live data provider (require choosing a provider and
+  the owner's own practice account; no account was created and no credential used).
+- *Revision 2026-10-18:* provider chosen for DEMO: Interactive Brokers (paper account, TWS API
+  through a local IB Gateway). Phase A (authorized) is read-only: `app/fx/ibkr` reads quotes,
+  bars, account values and positions, has no order method, connects read-only and refuses any
+  non-paper session (`DU…` prefix, to confirm on the first real connection). Phase B (orders
+  to the paper account) requires a separate authorization; REAL stays blocked.
+
+## ADR-0037 — Native desktop application and engine process protocol
+
+- **Status:** Accepted (2026-10-17). Implemented in `app/desktop` and `app/engine`.
+- **Context:** The owner requires a native Windows application in its own window (resizable,
+  full screen, icon), game-like, packageable as an `.exe`, not a web app in a browser. Godot 4
+  and PySide6 were compared in Phase 0.
+- **Decision:**
+  1. **PySide6 (Qt 6, LGPL v3)**: one language and one process model with the Python engine,
+     native widgets for dense trading tables, procedural pixel art in `QPainter`. Godot would add
+     a second language/runtime and an IPC bridge for little gain at this stage.
+     `pyside6-essentials` only (no WebEngine).
+  2. **Separate engine process.** The UI starts the engine as a child process (`--engine` in the
+     frozen exe, `python -m app.engine` from source) and is only a client: it renders snapshots
+     and sends commands; it never places orders. A UI crash cannot corrupt the engine state.
+  3. **Protocol v1** (`app/engine/protocol.py`): JSON lines over TCP on 127.0.0.1 only; a fresh
+     random session token per launch, passed through the environment (not the command line) and
+     compared in constant time; `hello/welcome`, periodic `snapshot`, live `event`, `command`
+     with id and `ack`, `heartbeat`. There is no command to place an order by hand. Destructive
+     commands need typed confirmation words (`FECHAR`, `REINICIAR`, `LIBERTAR`).
+  4. **Single instance** per data directory (OS lock on `engine.lock`).
+  5. **Window-close policy:** closing the window asks for confirmation, then stops the engine
+     cleanly (state saved; positions stay in the simulated account with their server-side stops
+     and are recovered on the next start). *Revision 2026-10-18 (E2, M2-M5):* the engine
+     refuses to start (exit code 4, `ENGINE_ERROR startup:<code>`, never restarted
+     automatically by the desktop) when the configured environment, the adapter's declared
+     environment and the enabled set (`environment.ENABLED` = SIMULATION) disagree, when the
+     journal hash chain is broken or shorter than the saved state's journal head, when state
+     documents are malformed/incomplete (or missing while the journal has history), or when
+     the configured account currency differs from the persisted account's; nothing is
+     repaired or recreated. The desktop's environment badge shows only the engine's validated
+     environment. An internal error pauses the engine with a persisted `safety` reason; only
+     the explicit `resume` command with the typed word `RETOMAR` resumes it. The configured
+     pairs must also match the persisted account's. **Orphan policy:** the engine stops by itself if no
+     client is connected for 20 s, so a crashed UI never leaves a hidden engine trading. A
+     background/tray mode is a possible later option (it needs its own ADR).
+  6. **Visual identity:** dark cyber operations room, neon green/magenta/cyan, amber warnings, red
+     critical; all art procedural (no third-party assets). **State is never shown by colour
+     alone**: every status has a distinct glyph shape and a text label.
+  7. **Packaging:** PyInstaller one-folder build (`packaging/build.py`), Windows version
+     resource, generated multi-size icon, portable zip. LGPL compliance by dynamic linking and
+     `THIRD_PARTY_NOTICES.md`. Code signing is not set up (SmartScreen will warn).
+
+## ADR-0038 — FX trading day and daily risk definitions
+
+- **Status:** Accepted (2026-10-17). Implemented in `app/fx/calendar.py` and `app/fx/risk.py`.
+- **Decision:**
+  1. **Trading day** = 17:00 New York to 17:00 New York (rollover), DST-aware through `zoneinfo`.
+     The market is open Sunday 17:00 to Friday 17:00 New York; configurable holiday trading days
+     (25 December and 1 January by default) are closed.
+  2. **Daily P&L** = current equity − day-start equity, where equity = balance + unrealized P&L
+     marked at the liquidation side; it is therefore net of spread, commissions and realized
+     results. Day-start equity is the first equity observed in the trading day.
+  3. **Entries**: an authorized intent that opens or increases exposure (including the opening
+     leg of a reversal) counts as one entry. It is reserved at authorization, consumed when it
+     fills (a partial fill consumes it) and released if nothing fills; a reservation in flight at
+     the rollover counts on the day it fills. Exits never count. Default maximum: 5 per day.
+  4. **Locks**: daily P&L ≤ −5 % → `daily_loss` lock (default: flatten positions); ≥ +15 % →
+     `profit_target` lock (default: keep positions with their stops). A lock blocks new entries
+     until the next trading day, survives restarts and cannot be released by hand. Exits are
+     always allowed. **Precedence** (revision 2026-10-18, fix E1): `daily_loss` >
+     `profit_target`. The loss limit is evaluated on every observation even after the profit
+     target locked the day; reaching it upgrades the lock to `daily_loss` and applies its
+     flatten policy. A `daily_loss` lock is never downgraded.
+  5. **Kill switch**: blocks all new entries until released manually with the word `LIBERTAR`;
+     survives restarts and day rolls; may be engaged with "flatten all".
+     *Revision 2026-10-18 (maximum drawdown breaker):* equity falling `max_drawdown_pct`
+     (default 20 %, validated in (0, 90]) below its persisted peak engages the kill switch.
+     It blocks NEW entries only: it does not close open positions and does not guarantee that
+     losses stop at that level. Added after the holdout diagnostic replay (all agents, incl.
+     unapproved) lost 76 % in a year with a single daily-loss lock; an exploratory replay
+     run after that observation stopped new entries at about -20 % (not an independent
+     validation; docs/fx-agent-validation.md).
+  6. **Entry checks** (all must pass): environment not REAL; kill switch off; no lock; entry
+     available; market open and outside 15 min around the rollover; fresh quote (≤ 120 s); price
+     origin allowed (DEMO: LIVE only); spread ≤ 3 pips; score ≥ 0.55; stop loss present and on
+     the right side; risk/reward ≥ 1.2; size from risk per trade (0.5 % of equity at the stop),
+     cut to the leverage cap (30× gross); minimum size; max open positions; free margin after
+     the trade ≥ 50 % of equity; net exposure per currency ≤ 600 % of equity. No pyramiding.
+  7. Changing risk settings applies immediately but never clears an engaged lock or the kill
+     switch; account currency/capital change only through an explicit account reset.
+
+## ADR-0039 — IBKR paper pilot (phase B)
+
+**Status:** accepted 2026-10-18 (owner authorization: paper orders only).
+
+**Context.** No rule agent passed the pre-registered holdout. The owner asked for agents to be
+trained, and for any that fail to be replaced, with entries on the demo (paper) account.
+Retrospective selection on already-inspected history is not independent validation.
+
+**Decision.**
+- Trained candidates trade only through a separate pilot process, on the IBKR **paper**
+  account, labelled PILOTO EXPERIMENTAL. They are never "approved".
+- The pilot is dry-run unless armed explicitly on every start, and uses virtual capital
+  (10 000 EUR) with its own store.
+- The central risk manager applies in environment DEMO.
+- Each order requires a paper identity check immediately before sending, a write-ahead
+  intention, and a deterministic `orderRef` looked up before sending.
+- An unanswered order is reconciled and never resent; it engages the kill switch after 3
+  cycles.
+- An entry whose stop or target IBKR does not confirm stops the pilot with an alarm.
+- A close cancels protection and waits for confirmation. If the protection already executed,
+  no closing order is sent.
+- Retirement follows the predeclared rule in `retirement_decision` (5 R decline, or 20 trades
+  with negative mean and PF < 1), using closed trades deduplicated by execution id. An empty
+  slot means NO TRADE.
+- The Gateway's Read-Only API setting is changed by the owner only, never by code.
+- The REAL environment stays blocked (ADR-0006).
+
+**Consequences.** The pilot produces prospective paper evidence, not proof of an edge. On
+2026-10-18 no candidate was eligible, so it observes and journals but does not trade.
+
 ## ADR-0040 — Multi-asset trend research v2: one fixed rule, sealed test, offline only
 
 **Status:** accepted 2026-11-14 (T0 approved by the owner with corrections). Offline scope
 pre-approved phase by phase. Design: `docs/superpowers/specs/2026-11-14-multi-asset-trend-v2-design.md`,
-which supersedes in part the 2026-11-04 design. Numbering continues after ADR-0039, which lives on
-`feature/fx-desktop-platform` (ADR-0028 to ADR-0039 are not on `main`).
+which supersedes in part the 2026-11-04 design. Numbering continues after ADR-0039, written on
+`feature/fx-desktop-platform` and on `main` since PR #1; `origin/main` was merged into
+`feature/multi-asset-trend` on 2026-11-14, before T2.
 
 **Context.** No intraday FX agent (M15, H1, M5) and no SPY timing rule passed pre-registered
 validation. The owner ended that line of research and chose to test a single slow trend strategy

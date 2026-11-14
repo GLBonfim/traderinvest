@@ -1,7 +1,8 @@
 # Simple Multi-Asset Trend Bot — Design
 
 Date: 2026-11-04  
-Status: superseded in part by the
+Original status (2026-11-04): proposed; no implementation is authorized until the owner approves this document.
+Current status (2026-11-14): superseded in part by the
 [2026-11-14 design v2](2026-11-14-multi-asset-trend-v2-design.md) (ADR-0040). Principles,
 safety boundaries and later operational stages remain valid; the strategy, universe, gates and
 delivery plan are replaced by v2.

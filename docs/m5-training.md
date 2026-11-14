@@ -1,0 +1,15 @@
+# Treinamento e validação M5
+
+Objetivo: avaliar a qualidade das entradas em velas de cinco minutos, sem aumentar a meta de operações. Três especialidades recebem o contexto de um analista: reversão, continuação e impulso. Uma entrada exige padrão geométrico real com contexto, sessão permitida e concordância do componente preditivo. Ausência de sinal é resultado válido.
+
+O coletor `python -m app.fx.research.m5_history` obtém BID e ASK M5 diretamente da sessão paper IBKR, em modo somente leitura, para EURUSD, EURGBP e EURJPY. Os arquivos são retomáveis e o manifesto registra período, contagens e SHA-256. Não se fabricam velas M5 a partir do histórico M15. A corretora documenta a granularidade de cinco minutos e os tipos BID/ASK em [Historical Bars](https://www.interactivebrokers.com/docs/tws-api/doc/md/historical-bars).
+
+O validador `python -m app.fx.research.m5_validation --data data/fx/ibkr-m5 --out data/fx/training/run-m5-20261018` grava o protocolo antes de ler dados. A busca é limitada a seis candidatos, dois por especialidade. Treino expanding em 2023 e 2023–2024; avaliação em 2024 e 2025; seleção congelada antes do teste temporal de 2026. Rótulos são purgados com embargo de 24 horas. O período 2026 já foi observado na pesquisa M15 anterior: não se alega independência estatística absoluta.
+
+Cada candidato é avaliado com preços bid/ask, spread mínimo conservador, comissão mínima por ordem, tamanho máximo de EUR 5.000 e risco de referência de 0,1% sobre EUR 10.000. O teste agravado acrescenta slippage e custos maiores. A execução é simulada na abertura posterior à vela fechada; stop prevalece em uma vela que toca stop e alvo. As regras completas e a assinatura ficam em `protocol.json`.
+
+Antes de qualquer treinamento ou resultado, uma auditoria aritmética dos custos motivou uma revisão da geometria: stop mínimo de 2 ATR, alargado quando necessário para que a comissão de ida e volta não exceda 0,45 R no tamanho máximo; alvo de 2 R e prazo máximo de 96 velas M5 (oito horas). O veto de custos é conferido novamente após arredondar o tamanho, sem exceder o orçamento de risco. Entrar em M5 não significa obrigatoriamente encerrar em cinco minutos. Não haverá mudança de regras para melhorar resultados já medidos.
+
+Os limites por candidato da simulação não representam a carteira conjunta dos três agentes. Qualquer candidato elegível ainda precisa da integração e validação da carteira e de evidência prospectiva na demo. O laboratório H1 existente não é automaticamente convertido para M5. Nenhum modelo reprovado será promovido para preencher três vagas; a conta real continua bloqueada.
+
+O supervisor `python -m app.fx.research.m5_job --outputs <pasta outputs desta conversa>` conclui a coleta semanal, executa treino/validação e exporta relatório, modelos, operações simuladas, protocolo e checksum. O arquivo `job.json` e os logs registram a etapa corrente. Há locks separados para o supervisor e o coletor. Criar `STOP` na pasta da rodada interrompe apenas este trabalho de pesquisa; não altera o laboratório H1. Computador, Gateway e conexão precisam permanecer disponíveis durante a coleta.

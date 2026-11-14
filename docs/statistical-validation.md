@@ -69,6 +69,31 @@ Interpretation per metric:
 | max drawdown | **approximate**: path-dependent, block resampling preserves only within-block paths |
 | Sortino | resamples without negative returns are undefined and excluded (`valid_resamples`) |
 
+### Kinds of results (how to read them)
+
+| Kind | What it is | Where it appears |
+|---|---|---|
+| 1. Descriptive point estimate | the metric (or a difference) on the one observed historical path | every table |
+| 2. Exploratory bootstrap interval | percentile interval of a moving-block bootstrap; describes sampling variability under the bootstrap's assumptions, **not** a validated confidence interval | `intervals`/`comparisons` with `family = descriptive`; every risk-overlay comparison (`risk_comparisons.csv`, `interval_kind = exploratory_block_bootstrap_percentile`) |
+| 3. Confidence interval with established validity | coverage demonstrated for the metric and the data-generating assumptions (e.g. by simulation) | **none is claimed** in this project at present |
+| 4. Formal hypothesis test with multiple-comparison correction | pre-declared family, bootstrap p-value, Holm (primary) / BH (secondary) | only the Phase 9 formal family (30 tests, `family = formal`) |
+
+For the risk-profile research, the families of each kind (exploratory, confirmatory,
+temporal) are pre-specified in [statistical-protocol.md](statistical-protocol.md) (draft).
+
+Two cautions apply to kind 2:
+
+- **Order-dependent metrics** (max drawdown): block resampling breaks drawdown paths; the
+  bootstrap distribution need not be centred on the point estimate, and the point estimate can
+  fall outside its own percentile interval. Such intervals are exploratory only.
+- **Path-dependent policies** (drawdown lock, stop): resampling the *realized* returns of a
+  policy is not the same as resampling the *inputs* and re-running the policy. The realized
+  zero-return (flat) periods of a lock stay where they were and no longer coincide with the
+  resampled drawdowns, so the interval describes the variability of the two realized return
+  streams, not of the policy's effect. Re-running the policy on resampled inputs is a different
+  (and much more expensive) method, with its own limits (block resampling also breaks the
+  crashes that trigger the policy).
+
 ## Comparisons
 
 All differences are `a − b` of the same metric on the **same resampled sessions**.
@@ -234,3 +259,33 @@ resamples), of which bootstrap ≈ 11.5 s, backtests ≈ 13.7 s, strategy featur
   known alternative, not implemented).
 - Costs remain generic assumptions; scenario D is not "the" true cost.
 - Dividends are not credited to timing strategies (Phase 8 convention, unchanged).
+
+## Recorded runs (research run registry)
+
+An explicit command runs the same `Validator` with the same fixed `ValidationConfig` and records
+the result in the research run registry (`app/research_runs/`). Nothing runs it automatically
+(no startup hook, schedule or HTTP route).
+
+```
+uv run python -m app.validation.cli record --symbol SPY --registry data/research_runs
+uv run python -m app.validation.cli verify --registry data/research_runs [--run-id ID]
+```
+
+- `--registry` is required (no implicit location); `data/` is git-ignored. Bars and the
+  dataset identity are read from the local database in one READ ONLY transaction.
+- A published run is `runs/<run_id>/` with `intervals.csv`, `comparisons.csv`,
+  `cost_sensitivity.csv`, `redundancy.csv`, `concentration.csv`, `summary.json` and the manifest
+  `run.json` (config, data and dataset fingerprints, git commit and dirty state, parameters,
+  start/end times, size and SHA-256 of every artifact). Unknown values are recorded as
+  `unknown`, never guessed.
+- The run is complete only when every artifact was verified and the `completed` event is in the
+  hash-chained history (`index.jsonl`); an error records it as `failed` and earlier runs are
+  never touched. `verify` (read-only) re-checks the history, the manifest and every hash; exit
+  code 0 means complete.
+- One job per invocation, synchronously; run one `record` at a time. Registry writes are
+  serialised by `PipelineLock` (`app/operations/lock.py`, ADR-0032): its check-then-act sections
+  run under an OS mutex, so threads and processes cannot hold the lock together, and transient
+  Windows sharing errors are retried within a bound (tested with concurrent threads and
+  processes on Windows). Writes are serialised, the validation computations are not: two
+  concurrent `record` commands would each compute and publish a separate run, which is not the
+  intended workflow.

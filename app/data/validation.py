@@ -64,7 +64,7 @@ def _issue(
 
 def _jsonable(v: object) -> object:
     if isinstance(v, float | np.floating):
-        return None if np.isnan(v) else float(v)
+        return None if not np.isfinite(v) else float(v)
     if isinstance(v, date | datetime | pd.Timestamp):
         return v.isoformat()
     if isinstance(v, np.integer):
@@ -145,6 +145,12 @@ def validate_daily(
         df[list(REQUIRED_COLUMNS)].isna().any(axis=1).to_numpy(),
         "null_value",
         "Missing open/high/low/close/volume.",
+    )
+    # Infinity is not missing, but cannot be persisted as a finite numeric value.
+    exclude(
+        np.isinf(df[[*REQUIRED_COLUMNS, "adj_close"]].to_numpy(dtype=float)).any(axis=1),
+        "non_finite_value",
+        "Infinite price, adjusted close or volume.",
     )
     # 3. Non-positive prices.
     exclude(

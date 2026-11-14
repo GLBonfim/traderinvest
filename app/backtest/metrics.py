@@ -141,3 +141,89 @@ def all_metrics(
         **trade_metrics(trades),
         **activity_metrics(equity, periods),
     }
+
+
+# ── ADR-0034 D-A5: undefined daily returns (risk and paper engines only) ──
+# The Phase 8 backtester keeps `returns_from_equity`; the functions below are used by the risk
+# overlay and the paper engine, whose equity may be 0 (a valid state).
+
+RETURN_BASED_METRICS = ("annualized_volatility", "sharpe", "sortino")
+GROSS_RETURN_BASED_METRICS = ("gross_sharpe",)
+UNDEFINED_RETURNS_NOTE = (
+    "not computed: {n} undefined daily return(s) (previous equity 0); an undefined return is "
+    "never treated as 0 and no session is dropped"
+)
+
+
+def defined_returns(equity: pd.Series, initial: float) -> pd.Series:
+    """r_t = equity_t / equity_{t-1} - 1 as a nullable `Float64` series: `pd.NA` (undefined)
+    where equity_{t-1} = 0 (no division), the same float64 value as `returns_from_equity`
+    elsewhere (a close that reaches 0 from a positive equity is a defined -1)."""
+    e = equity.to_numpy(np.float64)
+    prev = np.concatenate(([float(initial)], e[:-1])) if len(e) else e
+    undefined = prev == 0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        r = e / np.where(undefined, 1.0, prev) - 1
+    return pd.Series(pd.arrays.FloatingArray(r, undefined), index=equity.index)
+
+
+def undefined_mask(returns: pd.Series) -> np.ndarray:
+    """True where a return is undefined (`pd.NA` of a nullable float series). A plain float64
+    NaN is not 'undefined' (it is a non-finite value, reported as such)."""
+    if isinstance(returns.dtype, pd.Float64Dtype):
+        return np.asarray(returns.isna(), dtype=bool)
+    return np.zeros(len(returns), dtype=bool)
+
+
+def without_undefined_return_metrics(
+    metrics: dict[str, Any], net_undefined: int, gross_undefined: int
+) -> dict[str, Any]:
+    """Return-based metrics of a series with undefined returns are reported as undefined
+    (None) with the reason, never computed over a shortened or zero-filled series. A series
+    without undefined returns is returned unchanged (same dict content)."""
+    if not net_undefined and not gross_undefined:
+        return metrics
+    out = dict(metrics)
+    if net_undefined:
+        for k in RETURN_BASED_METRICS:
+            out[k] = None
+        out["undefined_returns"] = net_undefined
+        out["return_metrics_note"] = UNDEFINED_RETURNS_NOTE.format(n=net_undefined)
+    if gross_undefined:
+        for k in GROSS_RETURN_BASED_METRICS:
+            out[k] = None
+        out["gross_undefined_returns"] = gross_undefined
+    return out
+
+
+# Status of each return-based metric, from the calculation layer (never inferred from an empty
+# CSV cell): `defined` (a finite value), `undefined_returns` (None: the series has undefined
+# returns, see `without_undefined_return_metrics`), `undefined_nan` (NaN from the metric's own
+# domain: fewer than 2 sessions, zero standard deviation for Sharpe, no downside for Sortino).
+METRIC_DEFINED = "defined"
+METRIC_UNDEFINED_RETURNS = "undefined_returns"
+METRIC_UNDEFINED_NAN = "undefined_nan"
+
+
+def return_metric_status(metrics: dict[str, Any]) -> dict[str, str]:
+    """`<metric>_status` for every return-based metric. Raises ValueError on a state the
+    calculation layer never produces (None without undefined returns, a number although the
+    series has undefined returns, an infinite value) instead of guessing a status."""
+    n_undefined = metrics.get("undefined_returns", 0)
+    out: dict[str, str] = {}
+    for k in RETURN_BASED_METRICS:
+        v = metrics[k]
+        if v is None:
+            if not n_undefined:
+                raise ValueError(f"{k} is None but the series has no undefined returns")
+            status = METRIC_UNDEFINED_RETURNS
+        elif n_undefined:
+            raise ValueError(f"{k} was computed although the series has undefined returns")
+        elif math.isnan(v):
+            status = METRIC_UNDEFINED_NAN
+        elif math.isfinite(v):
+            status = METRIC_DEFINED
+        else:
+            raise ValueError(f"{k} is not finite: {v!r}")
+        out[f"{k}_status"] = status
+    return out

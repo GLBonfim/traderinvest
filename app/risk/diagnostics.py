@@ -4,6 +4,14 @@ DESCRIPTIVE paired comparisons of each overlay against the no-overlay control.
 No scenario is selected or ranked. Comparisons are intervals only (no p-values): the scenarios
 are infrastructure checks, not hypotheses about value; their count is reported so that any
 later formal use can account for multiplicity.
+
+The intervals are EXPLORATORY percentile intervals of a moving-block bootstrap of the REALIZED
+daily returns, not validated confidence intervals: resampling an overlay's realized returns does
+not re-run the overlay on resampled inputs (a path-dependent control such as a drawdown lock or
+a stop is not re-applied), and for order-dependent metrics (max drawdown) block resampling also
+breaks the drawdown paths themselves. Each row carries the bootstrap median, the number of
+finite samples, `order_dependent`, `interval_kind` and whether the point estimate falls inside
+its own interval, so that a biased distribution is visible.
 """
 
 import dataclasses
@@ -17,6 +25,7 @@ import pandas as pd
 
 from app.backtest.config import BacktestConfig
 from app.backtest.engine import session_times
+from app.backtest.metrics import return_metric_status, undefined_mask
 from app.data.calendar import TradingCalendar
 from app.indicators.engine import IndicatorEngine
 from app.risk.config import RISK_VERSION, SCENARIOS, RiskConfig
@@ -24,7 +33,7 @@ from app.risk.engine import RiskOverlay, RiskRun
 from app.strategies.engine import StrategyEngine
 from app.validation.config import DEFAULT_SLICES, SliceSpec, ValidationConfig
 from app.validation.metrics import matrix_metrics
-from app.validation.resampling import moving_block_indices, percentile_interval
+from app.validation.resampling import bootstrap_summary, moving_block_indices
 
 METRIC_KEYS = (
     "cumulative_return",
@@ -43,6 +52,14 @@ METRIC_KEYS = (
     "total_costs",
     "realized_pnl",
     "unrealized_pnl",
+)
+COMPARED_METRICS = ("sharpe", "annualized_volatility", "max_drawdown", "cagr")
+# Metrics whose value depends on the ORDER of the returns (not only on their multiset).
+ORDER_DEPENDENT_METRICS = frozenset({"max_drawdown"})
+INTERVAL_KIND = "exploratory_block_bootstrap_percentile"
+ORDER_DEPENDENT_NOTE = (
+    "path-dependent metric: block resampling of realized returns breaks drawdown paths and "
+    "does not re-run the policy; exploratory only, not a confidence interval"
 )
 
 
@@ -68,7 +85,13 @@ class RiskSuiteReport:
             }
             for (s, st, sc), r in self.runs.items()
         ]
-        return pd.DataFrame(rows)
+        table = pd.DataFrame(rows)
+        # appended after every existing column: why a return-based metric is missing
+        # (ADR-0034 D-A5, step 4b.1); set from the metrics, never from the cell
+        status = [return_metric_status(r.metrics) for r in self.runs.values()]
+        for col in status[0] if status else ():
+            table[col] = [st[col] for st in status]
+        return table
 
 
 def run_risk_suite(
@@ -135,19 +158,39 @@ def _compare(
     out: list[dict[str, Any]] = []
     strategies = sorted({st for (s, st, _) in report.runs if s == slice_name})
     for sid in strategies:
-        cols = {sc: report.runs[(slice_name, sid, sc)].equity["daily_return"] for sc in scenarios}
-        r = pd.DataFrame(cols).to_numpy(np.float64)
-        idx = moving_block_indices(r.shape[0], v.block_length, v.n_resamples, v.seed)
-        point = matrix_metrics(r, v.periods_per_year)
-        keys = ("sharpe", "annualized_volatility", "max_drawdown", "cagr")
-        boot = {k: np.empty((v.n_resamples, len(scenarios))) for k in keys}
-        for b in range(v.n_resamples):
-            m = matrix_metrics(r[idx[b]], v.periods_per_year)
+        series = {sc: report.runs[(slice_name, sid, sc)].equity["daily_return"] for sc in scenarios}
+        # D-A5: a series with an undefined return is never used as a complete series (no
+        # session dropped, no value imputed); its comparisons are reported as not testable.
+        undefined = [sc for sc in scenarios if undefined_mask(series[sc]).any()]
+        usable = (
+            [sc for sc in scenarios if sc not in undefined] if scenarios[0] not in undefined else []
+        )
+        keys = COMPARED_METRICS
+        if usable:
+            cols = {sc: series[sc].to_numpy(np.float64, na_value=np.nan) for sc in usable}
+            r = pd.DataFrame(cols).to_numpy(np.float64)
+            idx = moving_block_indices(r.shape[0], v.block_length, v.n_resamples, v.seed)
+            point = matrix_metrics(r, v.periods_per_year)
+            boot = {k: np.empty((v.n_resamples, len(usable))) for k in keys}
+            for b in range(v.n_resamples):
+                m = matrix_metrics(r[idx[b]], v.periods_per_year)
+                for k in keys:
+                    boot[k][b] = m[k]
+        for sc in scenarios[1:]:
+            if sc not in usable:
+                which = [x for x in (scenarios[0], sc) if x in undefined]
+                out += [_not_testable(slice_name, sid, sc, scenarios[0], k, which, v) for k in keys]
+                continue
+            j = usable.index(sc)
             for k in keys:
-                boot[k][b] = m[k]
-        for j, sc in enumerate(scenarios[1:], start=1):
-            for k in keys:
-                lo, hi, _ = percentile_interval(boot[k][:, j] - boot[k][:, 0], v.confidence)
+                bs = bootstrap_summary(boot[k][:, j] - boot[k][:, 0], v.confidence)
+                estimate = float(point[k][j] - point[k][0])
+                inside = (
+                    bool(bs.lower <= estimate <= bs.upper)
+                    if np.isfinite([estimate, bs.lower, bs.upper]).all()
+                    else None
+                )
+                order_dependent = k in ORDER_DEPENDENT_METRICS
                 out.append(
                     {
                         "slice": slice_name,
@@ -155,13 +198,53 @@ def _compare(
                         "scenario": sc,
                         "vs": scenarios[0],
                         "metric": k,
-                        "estimate": float(point[k][j] - point[k][0]),
-                        "lower": lo,
-                        "upper": hi,
+                        "estimate": estimate,
+                        "lower": bs.lower,
+                        "upper": bs.upper,
                         "family": "descriptive",
                         "block_length": v.block_length,
                         "n_resamples": v.n_resamples,
                         "seed": v.seed,
+                        # appended columns (existing ones keep their names and order)
+                        "bootstrap_median": bs.median,
+                        "n_finite": bs.n_finite,
+                        "order_dependent": order_dependent,
+                        "interval_kind": INTERVAL_KIND,
+                        "estimate_in_interval": inside,
+                        "note": ORDER_DEPENDENT_NOTE if order_dependent else "",
                     }
                 )
     return out
+
+
+NOT_TESTABLE_NOTE = (
+    "not testable: undefined daily return(s) in {which} (previous equity 0); no session "
+    "dropped, no value imputed"
+)
+
+
+def _not_testable(
+    slice_name: str, sid: str, sc: str, vs: str, metric: str, which: list[str], v: ValidationConfig
+) -> dict[str, Any]:
+    """A comparison row that is not computed (same columns as a computed row)."""
+    nan = float("nan")
+    return {
+        "slice": slice_name,
+        "strategy": sid,
+        "scenario": sc,
+        "vs": vs,
+        "metric": metric,
+        "estimate": nan,
+        "lower": nan,
+        "upper": nan,
+        "family": "descriptive",
+        "block_length": v.block_length,
+        "n_resamples": v.n_resamples,
+        "seed": v.seed,
+        "bootstrap_median": nan,
+        "n_finite": 0,
+        "order_dependent": metric in ORDER_DEPENDENT_METRICS,
+        "interval_kind": INTERVAL_KIND,
+        "estimate_in_interval": None,
+        "note": NOT_TESTABLE_NOTE.format(which=" and ".join(which)),
+    }
