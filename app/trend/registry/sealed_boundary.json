@@ -1,0 +1,5 @@
+{
+  "manifest_sha256": "d945583ac1a8c97e99f3d1e0c9bc03b21f180b4030b78891e444c8c89ef7d551",
+  "schema": "trend-sealed-boundary/1",
+  "sealed_start": "2023-06-01"
+}
