@@ -78,9 +78,7 @@ def test_own_series_carries_no_proxy_ter(raw: dict[str, Any]) -> None:
 
 
 def test_series_rule_flags_index_mismatch(raw: dict[str, Any]) -> None:
-    u = parse_universe(raw)
-    flagged = [v.split(":")[0] for v in series_rule_violations(u)]
-    assert flagged == ["JAPAN_EQ", "EM_EQ"]  # IMI products against non-IMI US proxies
-    for a in raw["assets"]:
-        a["research"]["tracks"] = a["product"]["tracks"]
-    assert series_rule_violations(parse_universe(raw)) == []
+    assert series_rule_violations(parse_universe(raw)) == []  # registered universe complies
+    raw["assets"][0]["research"]["tracks"] = "S&P 500 Equal Weight"  # US_EQ proxy SPY
+    flagged = series_rule_violations(parse_universe(raw))
+    assert [v.split(":")[0] for v in flagged] == ["US_EQ"]

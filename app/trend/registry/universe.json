@@ -3,10 +3,10 @@
   "frozen_on": "2026-11-14",
   "frozen_before": "any download of price history, moving average, signal or return statistic",
   "inputs_seen_before_freezing": "series first dates and row counts only; product facts (TER, listing, inception) from justETF on 2026-11-14",
-  "series_rule": "Use the executable product's own Yahoo Finance series when it starts on or before 2008-12-31; otherwise use the US-listed ETF that tracks the same index as the product. The rule is mechanical and does not depend on returns.",
+  "series_rule": "Use the executable product's own Yahoo Finance series when it starts on or before 2008-12-31; otherwise use a US-listed ETF or ETN that tracks the same index as the product (owner amendment 2026-11-14). The rule is mechanical and does not depend on returns.",
   "series_rule_conditions": {
     "approved_by_owner_on": "2026-11-14",
-    "a_same_index_or_exclude": "If no US-listed ETF tracks the product's own index, the asset is excluded; it is never replaced by a similar index. Checked mechanically: a proxy's 'tracks' must equal the product's 'tracks'.",
+    "a_same_index_or_exclude": "If no US-listed ETF or ETN tracks the product's own index, the asset is excluded; it is never replaced by a similar index. Checked mechanically: a proxy's 'tracks' must equal the product's 'tracks'.",
     "b_known_at_decision": "The signal and the EUR conversion use only values published before D(T) = 23:00 Europe/Lisbon. The US close (16:00 New York = 20:00-21:00 Lisbon) is later than the Xetra close (17:30 CET) and the ECB rate (~16:00 CET), and all three precede D(T) on every day, including the weeks when US and EU daylight-saving dates differ.",
     "c_ter_difference": "A US ETF proxy already contains its own TER; its daily return is adjusted by (TER_us - TER_eu) / 365 per calendar day so that the realistic scenario carries exactly the executable product's TER."
   },
@@ -35,9 +35,10 @@
       "bucket": "equities",
       "exposure": "Japanese equities, unhedged to EUR",
       "rationale": "Separate economy, monetary policy and currency (JPY).",
-      "research": {"source": "yahoo", "symbol": "EWJ", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "ter_pct": 0.49, "ter_source": "iShares US product page", "tracks": "MSCI Japan"},
-      "product": {"isin": "IE00B4L5YX21", "name": "iShares Core MSCI Japan IMI UCITS ETF", "ticker": "EUNN", "ter_pct": 0.12, "distribution": "accumulating", "inception": "2009-09-25", "structure": "UCITS ETF, physical", "tracks": "MSCI Japan IMI"},
-      "cost_class": "B"
+      "research": {"source": "yahoo", "symbol": "IQQJ.DE", "currency": "EUR", "calendar": "XETR", "kind": "product_own", "tracks": "MSCI Japan"},
+      "product": {"isin": "IE00B02KXH56", "name": "iShares MSCI Japan UCITS ETF USD (Dist)", "ticker": "IQQJ", "ter_pct": 0.12, "distribution": "distributing", "inception": "2004-10-01", "structure": "UCITS ETF, physical", "tracks": "MSCI Japan"},
+      "cost_class": "B",
+      "replaces": "EUNN (MSCI Japan IMI) with proxy EWJ (MSCI Japan): index mismatch under condition (a); owner decision 2026-11-14, cost class B fixed before download"
     },
     {
       "id": "PACXJ_EQ",
@@ -53,9 +54,10 @@
       "bucket": "equities",
       "exposure": "Emerging-market equities, unhedged",
       "rationale": "Different growth, political and currency drivers from developed markets.",
-      "research": {"source": "yahoo", "symbol": "EEM", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "ter_pct": 0.70, "ter_source": "secondary sources range 0.68-0.72", "tracks": "MSCI Emerging Markets"},
-      "product": {"isin": "IE00BKM4GZ66", "name": "iShares Core MSCI Emerging Markets IMI UCITS ETF (Acc)", "ticker": "IS3N", "ter_pct": 0.18, "distribution": "accumulating", "inception": "2014-05-30", "structure": "UCITS ETF, physical", "tracks": "MSCI Emerging Markets IMI"},
-      "cost_class": "A"
+      "research": {"source": "yahoo", "symbol": "IQQE.DE", "currency": "EUR", "calendar": "XETR", "kind": "product_own", "tracks": "MSCI Emerging Markets"},
+      "product": {"isin": "IE00B0M63177", "name": "iShares MSCI EM UCITS ETF USD (Dist)", "ticker": "IQQE", "ter_pct": 0.18, "distribution": "distributing", "inception": "2005-11-18", "structure": "UCITS ETF, physical", "tracks": "MSCI Emerging Markets"},
+      "cost_class": "B",
+      "replaces": "IS3N (MSCI Emerging Markets IMI) with proxy EEM (MSCI Emerging Markets): index mismatch under condition (a); owner decision 2026-11-14, cost class B fixed before download"
     },
     {
       "id": "EZ_GOV",
@@ -155,20 +157,18 @@
     "secondary_sources": "bankeronwheels.com (2026); IBKR pages refused automated access (HTTP 403) during the survey",
     "alternative_not_used": "IBKR Pro Tiered: 0.05%, minimum EUR 1.25, maximum EUR 29, plus exchange/clearing fees."
   },
-  "pending_owner_review": {
-    "status": "The list of assets awaits the owner's review (2026-11-14). T2 does not start before it is approved.",
-    "series_rule_violations": [
-      "JAPAN_EQ: proxy EWJ tracks MSCI Japan, product EUNN tracks MSCI Japan IMI (condition a)",
-      "EM_EQ: proxy EEM tracks MSCI Emerging Markets, product IS3N tracks MSCI Emerging Markets IMI (condition a)"
-    ],
-    "questions": [
-      "COMMOD: the only long US history of the Bloomberg Commodity Index TR is DJP, an ETN (Barclays note), not an ETF."
+  "owner_review": {
+    "list_approved_on": "2026-11-14",
+    "decisions": [
+      "JAPAN_EQ and EM_EQ moved to the non-IMI products IQQJ and IQQE (own EUR series), cost class B, fixed before their download",
+      "COMMOD keeps DJP: the series rule admits a US-listed ETF or ETN tracking the same index",
+      "The other 8 assets approved unchanged"
     ]
   },
   "known_limitations": [
     "US-listed proxies trade during US hours (Xetra products trade during European hours); converted with the ECB rate published before the US close.",
     "US-listed proxies pay dividends gross of the 15% US withholding that Irish UCITS funds suffer; not adjusted (no new parameter).",
-    "DJP is an ETN (issuer credit risk); used only as a history of the Bloomberg Commodity total-return index.",
+    "DJP is an ETN (Barclays note, issuer credit risk); used only as a history of the Bloomberg Commodity total-return index. An ETN's market price can depart from the index value (its indicative value), so the research series can differ from the index on some days.",
     "Spreads and slippage are constant estimates; historical spreads (e.g. 2009-2012) were likely wider.",
     "US proxy TERs are held constant at their 2026-11-14 values over the whole history; past TERs differed (usually higher).",
     "IBKR pays no interest on the first EUR 10,000 of cash and benchmark minus 0.5 p.p. above it (secondary-source snapshot); the protocol's cash rate is EUR STR minus 0.25 p.p. for every capital."
