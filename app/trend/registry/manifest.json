@@ -1,14 +1,144 @@
 {
   "adr": "ADR-0040",
+  "amendments": [
+    {
+      "date": "2026-11-14",
+      "previous_sha256": "93d4e4097b534405c1e0940807c59d8d06cbee46a24d118f2b3ff01400474055",
+      "reason": "Owner decisions on T1 (2026-11-14), before any result: IBKR Pro Fixed commission confirmed against the IBKR Ireland price list; spread/slippage estimates approved and per-asset tiers recorded; 60/40 with annual rebalance, start in cash, same costs; series rule conditions (a) same index or exclude, (b) only values known at D(T), (c) TER difference adjustment for US ETF proxies; index labels harmonised for GOLD and COMMOD. Data, window and partitions unchanged. Asset list pending owner review."
+    }
+  ],
   "audit_sha256": "15981bc794877bcd98ff70080d27bf0f60cab3952ab61fe1371aa03574062aa4",
   "audit_verdict": "PASS",
+  "costs": {
+    "asset_tiers": {
+      "COMMOD": {
+        "cost_class": "C",
+        "half_spread_pct": 0.1,
+        "isin": "IE00BDFL4P12",
+        "product": "SXRS",
+        "slippage_pct": 0.05,
+        "ter_eu_pct": 0.19,
+        "ter_proxy_pct": 0.75
+      },
+      "EM_EQ": {
+        "cost_class": "A",
+        "half_spread_pct": 0.03,
+        "isin": "IE00BKM4GZ66",
+        "product": "IS3N",
+        "slippage_pct": 0.02,
+        "ter_eu_pct": 0.18,
+        "ter_proxy_pct": 0.7
+      },
+      "EUROPE_EQ": {
+        "cost_class": "A",
+        "half_spread_pct": 0.03,
+        "isin": "DE0002635307",
+        "product": "EXSA",
+        "slippage_pct": 0.02,
+        "ter_eu_pct": 0.2,
+        "ter_proxy_pct": null
+      },
+      "EUR_IG": {
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "IE0032523478",
+        "product": "IBCS",
+        "slippage_pct": 0.03,
+        "ter_eu_pct": 0.09,
+        "ter_proxy_pct": null
+      },
+      "EZ_GOV": {
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "LU0290355717",
+        "product": "XGLE",
+        "slippage_pct": 0.03,
+        "ter_eu_pct": 0.07,
+        "ter_proxy_pct": null
+      },
+      "GLOBAL_EQ": {
+        "cost_class": "C",
+        "half_spread_pct": 0.1,
+        "isin": "IE00B6R52259",
+        "product": "IUSQ",
+        "slippage_pct": 0.05,
+        "ter_eu_pct": 0.2,
+        "ter_proxy_pct": 0.32
+      },
+      "GLOBAL_RE": {
+        "cost_class": "C",
+        "half_spread_pct": 0.1,
+        "isin": "IE00B1FZS350",
+        "product": "IQQ6",
+        "slippage_pct": 0.05,
+        "ter_eu_pct": 0.59,
+        "ter_proxy_pct": null
+      },
+      "GOLD": {
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "IE00B579F325",
+        "product": "8PSG",
+        "slippage_pct": 0.03,
+        "ter_eu_pct": 0.12,
+        "ter_proxy_pct": 0.4
+      },
+      "JAPAN_EQ": {
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "IE00B4L5YX21",
+        "product": "EUNN",
+        "slippage_pct": 0.03,
+        "ter_eu_pct": 0.12,
+        "ter_proxy_pct": 0.49
+      },
+      "PACXJ_EQ": {
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "IE00B52MJY50",
+        "product": "SXR1",
+        "slippage_pct": 0.03,
+        "ter_eu_pct": 0.2,
+        "ter_proxy_pct": 0.47
+      },
+      "US_EQ": {
+        "cost_class": "A",
+        "half_spread_pct": 0.03,
+        "isin": "IE00B5BMR087",
+        "product": "SXR8",
+        "slippage_pct": 0.02,
+        "ter_eu_pct": 0.07,
+        "ter_proxy_pct": 0.0945
+      },
+      "US_TSY": {
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "IE00B1FZS798",
+        "product": "IUSM",
+        "slippage_pct": 0.03,
+        "ter_eu_pct": 0.07,
+        "ter_proxy_pct": 0.15
+      }
+    },
+    "commission": {
+      "broker": "Interactive Brokers Ireland, IBKR Pro Fixed, Germany (Xetra)",
+      "confirmed_by_owner_on": "2026-11-14",
+      "maximum_eur": null,
+      "minimum_eur": 3.0,
+      "rate_pct": 0.05,
+      "source_status": "Confirmed by the owner against the IBKR Ireland price list (commissions, Germany/Xetra, IBKR Pro Fixed) on 2026-11-14."
+    },
+    "spread_slippage_status": "ESTIMATES, not measurements: no free, machine-readable Xetra spread source was found on 2026-11-14 (Deutsche Boerse pages load spreads by script). Approved by the owner on 2026-11-14; real values are measured in the demo phase."
+  },
   "data_end": "2026-11-13",
   "data_rules": {
+    "availability": "At D(T) = 23:00 Europe/Lisbon the signal and the EUR conversion use only values already published: Xetra close (17:30 CET), ECB reference rate (~16:00 CET) and US close (16:00 New York), all earlier than D(T) on every day. Fills happen at the asset's next close.",
     "cash": "EONIA - 0.085 p.p. until 2019-09-30, EUR STR from 2019-10-01, minus 0.25 p.p., ACT/360, negative rates kept; interest from T-1 to T uses the rate for T-1.",
     "data_end": "Last complete session before the snapshot; later rows are ignored.",
     "eur_conversion": "USD series are divided by the ECB USD-per-EUR reference rate of the same date, or the latest earlier one; more than 4 weekdays of staleness fails closed.",
     "master_calendar": "Union of the universe assets' provider rows.",
     "sessions": "An asset's sessions are the provider's rows. Exchange-calendar differences are listed by the audit; a calendar session without a provider row is no session for that asset (its move is captured by the next row).",
+    "ter": "TER accrues per calendar day (TER / 365). An own series contains the product TER; a US ETF proxy contains its own TER and is adjusted by (TER_us - TER_eu) / 365 per calendar day. Scenario zero adds back the TER the series contains; double deducts one more TER_eu.",
     "total_return": "Daily factor (close_t + dividend_t) / close_{t-1}; split-adjusted close; dividends gross at the ex-date, reinvested at that close. The provider's Adj Close is used only to verify the data."
   },
   "design": "docs/superpowers/specs/2026-11-14-multi-asset-trend-v2-design.md",
@@ -157,7 +287,7 @@
   },
   "schema": "trend-manifest/1",
   "snapshot": "2026-11-14",
-  "universe_sha256": "7cebb3934a40b688dfcdb44290a5de277419dac87c7b3a1cff8ea3908d8187d1",
+  "universe_sha256": "b8adbab506c1b9acb8dc32d998e69dfd6af51eecae5d76da3bf1f72fecb58edb",
   "window": {
     "binding_asset": "GLOBAL_RE",
     "data_end": "2026-11-13",

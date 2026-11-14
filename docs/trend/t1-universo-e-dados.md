@@ -17,9 +17,12 @@ Data: 14/11/2026 · Ramo: `feature/multi-asset-trend` · Desenho: v2 (ADR-0040)
 
 - **Nenhum sinal, média móvel ou retorno da estratégia foi calculado.** Só foram feitas
   verificações de qualidade dos dados.
-- Manifesto congelado: `app/trend/registry/manifest.json`, hash
+- Manifesto congelado: `app/trend/registry/manifest.json`, hash original
   `93d4e4097b534405c1e0940807c59d8d06cbee46a24d118f2b3ff01400474055`. Uma segunda tentativa de
   congelar é recusada, e o comando `verify` recalcula o hash de todos os arquivos.
+- Depois das suas decisões, o manifesto foi **emendado**, não refeito. O novo hash é
+  `5f50f2aec2622ecb0323538268c83266f8c620c38fe322a6167b7e72bb6e82cc`. Veja a seção "Decisões
+  do dono".
 
 ## O universo e por que cada ativo está lá
 
@@ -52,7 +55,8 @@ Observações:
 ### Que série de preços se usa para cada ativo (regra mecânica)
 
 Quando o histórico do próprio produto europeu começa até 31/12/2008, usa-se esse histórico.
-Caso contrário, usa-se o ETF americano que segue o mesmo índice (ou o mais próximo).
+Caso contrário, usa-se o ETF americano que segue o mesmo índice. Pela sua decisão de
+14/11/2026, se ele não existir, o ativo sai da lista; nunca se usa um índice parecido.
 
 | Usam a série do próprio produto (em EUR) | Usam um substituto americano (em USD, convertido para EUR) |
 |---|---|
@@ -111,7 +115,7 @@ de dividendo grande. A série ajustada do Yahoo serve só para conferir os dados
 
 | Item | Valor usado | Grau de certeza |
 |---|---|---|
-| Comissão IBKR Pro Fixed, Xetra | 0,05% do valor, mínimo de 3 € por ordem, sem máximo | Fontes secundárias. As páginas da IBKR recusaram acesso automático (erro 403) |
+| Comissão IBKR Pro Fixed, Xetra | 0,05% do valor, mínimo de 3 € por ordem, sem máximo | **Confirmada pelo dono** no preçário da IBKR Irlanda (14/11/2026) |
 | Alternativa não usada: IBKR Tiered | 0,05%, mínimo de 1,25 €, máximo de 29 €, mais taxas da bolsa | Fontes secundárias |
 | Spread (metade, por lado) + derrapagem | Classe A: 0,03% + 0,02% · Classe B: 0,05% + 0,03% · Classe C: 0,10% + 0,05% | **Estimativas**, não medições |
 | TER | O de cada produto (tabela acima), sem contagem dupla | Fichas dos produtos (justETF, 14/11/2026) |
@@ -141,15 +145,71 @@ de dividendo grande. A série ajustada do Yahoo serve só para conferir os dados
 6. **Conhecimento prévio:** o dono e eu conhecemos a história dos mercados. A escolha do universo
    está protegida só pelo procedimento (critérios escritos e registro antes dos dados).
 
-## O que preciso de você para fechar a T1
+## Decisões do dono (14/11/2026), registradas antes de qualquer resultado
 
-1. **Comissões:** confirme, na sua conta IBKR (ou numa página aberta no navegador), a tarifa
-   Fixed da Xetra: 0,05% com mínimo de 3 €. Se a sua conta estiver no plano Tiered, diga-me.
-   Mudar este valor muda o registro do universo, e eu volto a congelar o manifesto. Isso é
-   permitido agora, porque ainda não há resultados.
-2. **Spreads:** aprove as estimativas das classes A, B e C, ou indique outros valores.
-3. **60/40:** aprove a composição de 60% em ações mundiais e 40% em dívida pública da zona euro.
-4. **Universo:** aprove os 11 ativos e a regra de escolha das séries.
+1. **Comissão:** fica o plano Fixed (0,05%, mínimo de 3 €), confirmado por você no preçário da
+   IBKR Irlanda. A fonte e a data estão no registro e no manifesto.
+2. **Spreads e derrapagem:** estimativas aprovadas. A classe de cada ativo está no manifesto
+   (`costs.asset_tiers`). Na fase demo medem-se os valores reais.
+3. **60/40:** aprovada, com reequilíbrio **uma vez por ano**, início em caixa e os mesmos custos
+   dos outros benchmarks.
+4. **Regra das séries:** aprovada com três condições:
+   - (a) sem um ETF americano do **mesmo** índice, o ativo sai da lista. O código verifica isso
+     sozinho e recusa simular enquanto houver uma violação.
+   - (b) sinal e câmbio só usam valores conhecidos às 23:00 de Lisboa. O fecho dos EUA (20:00 ou
+     21:00 em Lisboa) é posterior ao europeu, mas ainda anterior às 23:00, mesmo nas semanas em
+     que a mudança de hora não coincide. A T2 vai ter um teste para isto.
+   - (c) a série americana já desconta o TER do ETF americano. Por isso soma-se de volta esse TER
+     e desconta-se o do produto europeu. Os TER americanos estão no registro: SPY 0,0945%, EWJ
+     0,49%, EPP 0,47%, EEM 0,70% (as fontes dão de 0,68% a 0,72%), IEF 0,15%, GLD 0,40%, DJP
+     0,75% e ACWI 0,32%. Ficam constantes ao longo do histórico, uma limitação declarada.
+
+**Como o manifesto foi atualizado.** Pediu as decisões *no* manifesto, por isso o arquivo
+mudou e o hash também. Só foram acrescentadas regras e custos. Os arquivos de dados, a janela, a
+divisão 60/20/20, a auditoria e os parâmetros ficaram iguais, e o código recusa uma emenda que
+os altere. O novo manifesto guarda o hash do anterior (`93d4e409…` → `5f50f2ae…`). Assim
+qualquer pessoa pode conferir o que mudou.
+
+## Revisão da lista: o que a condição (a) encontrou
+
+Ao aplicar a condição (a), dois ativos **não a cumprem**:
+
+| Ativo | Série americana | Produto europeu | Problema |
+|---|---|---|---|
+| JAPAN_EQ | EWJ: MSCI Japan | EUNN: MSCI Japan **IMI** | O IMI inclui empresas pequenas. São índices diferentes |
+| EM_EQ | EEM: MSCI Emerging Markets | IS3N: MSCI Emerging Markets **IMI** | Idem. O ETF americano do índice IMI (IEMG) só existe desde 2012, tarde demais |
+
+Excluir os dois deixaria 9 ativos, abaixo do mínimo de 10 do desenho. Existe uma saída que
+cumpre a regra à letra, sem trocar de índice: escolher o produto europeu do índice **sem** IMI.
+
+| Ativo | Produto alternativo (Xetra, EUR) | Índice | TER | Série no Yahoo desde |
+|---|---|---|---|---|
+| JAPAN_EQ | IQQJ · iShares MSCI Japan (Dist), IE00B02KXH56 | MSCI Japan | 0,12% | 02/01/2008 |
+| EM_EQ | IQQE · iShares MSCI EM (Dist), IE00B0M63177 | MSCI Emerging Markets | 0,18% | 02/01/2008 |
+
+Pela regra das séries, os dois passariam a usar o histórico **do próprio produto**, em euros.
+Deixariam de precisar do ETF americano, do ajuste de TER e do cuidado com o horário dos EUA.
+
+- **Custo da troca:** acrescentar dois arquivos aos dados, auditar de novo e emendar o
+  manifesto.
+- **O que pode mudar:** a janela de datas não muda, porque o ativo que define o início continua
+  a ser o imobiliário.
+- **O que vi destes produtos:** só a data de início e o número de linhas. Não vi preços nem
+  retornos.
+
+Um terceiro ponto para decidir:
+- **COMMOD:** o único histórico americano longo do índice Bloomberg Commodity TR é o **DJP**, uma
+  nota de dívida do Barclays (ETN) e não um ETF. O índice é exatamente o mesmo do produto
+  europeu (SXRS). Os ETF americanos deste índice só existem desde 2017–2018. Se "ETF americano"
+  for para ler à letra, as matérias-primas saem e ficam 10 ativos.
+
+## O que preciso de você
+
+1. **JAPAN_EQ e EM_EQ:** trocar para IQQJ e IQQE (a minha recomendação), ou excluir os dois?
+   Excluir deixa a lista abaixo do mínimo.
+2. **COMMOD:** aceitar o DJP (um ETN) como histórico do mesmo índice, ou excluir as
+   matérias-primas?
+3. **O resto da lista:** aprovar.
 
 ## Arquivos desta fase
 
@@ -158,5 +218,8 @@ de dividendo grande. A série ajustada do Yahoo serve só para conferir os dados
 - `app/trend/registry/manifest.json`: o manifesto congelado.
 - `app/trend/{universe,sources,loaders,audit,manifest,cli}.py`: o código; 22 testes em
   `tests/unit/trend/`.
-- Comandos: `uv run python -m app.trend.cli verify` (verifica os hashes) e `fetch` / `audit`
-  (para reproduzir).
+- Comandos:
+  - `uv run python -m app.trend.cli verify` confere os hashes e lista as violações da condição
+    (a). Hoje termina com erro de propósito, por causa de JAPAN_EQ e EM_EQ.
+  - `fetch` e `audit` servem para reproduzir os dados.
+  - `amend` regista mudanças de regras antes de qualquer resultado.

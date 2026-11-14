@@ -1,7 +1,7 @@
 # Multi-Asset Trend Strategy — Design v2
 
 Date: 2026-11-14
-Status: approved by the owner on 2026-11-14 with the corrections recorded in section 17.
+Status: approved by the owner on 2026-11-14 with the corrections recorded in section 17; T1 decisions in section 18 (asset list pending owner review).
 The owner pre-approved implementation of the OFFLINE scope below, phase by phase; each phase
 (T0–T4) ends with a report and waits for explicit approval.
 Branch: `feature/multi-asset-trend`, created from `main`.
@@ -140,7 +140,11 @@ fixed in the manifest, never chosen after results.
   otherwise fail closed.
 - **Decision time `D(T)`.** One daily decision at 23:00 Europe/Lisbon on master-calendar day
   `T`, after every relevant close and after the ECB rate of `T` is published. At `D(T)` each
-  asset's input is its latest close at or before `D(T)`.
+  asset's input is its latest close at or before `D(T)`. The US close (16:00 New York, 20:00
+  or 21:00 Lisbon) is later than the Xetra close (17:30 CET) and the ECB rate (~16:00 CET);
+  all three precede `D(T)` on every day, including the weeks when US and EU daylight-saving
+  dates differ. Signal and EUR conversion use only values published before `D(T)` (owner
+  condition (b) at T1); a T2 test checks it for every input.
 - **Master calendar.** All weekdays on which at least one universe asset has a session. An
   asset without a session on a master day carries its last close (zero return that day).
 - **Sessions.** "200 sessions" and "60 sessions" count the asset's *own* sessions.
@@ -233,10 +237,12 @@ T1 stops and reports.
 - **Spread.** Half-spread per side, per product, from a documented free source or a
   conservative documented estimate.
 - **Slippage.** Per product, per side, documented.
-- **TER.** Deducted daily as `TER / 365` per calendar day, with no double counting. A
-  research series that is the executable product's own price/NAV already contains one TER;
-  any other series (index, or a proxy fund) is treated as containing none of the executable
-  product's fees. The number of TERs deducted per scenario is in 8.2.
+- **TER.** Accrued daily as `TER / 365` per calendar day, with no double counting. A
+  research series that is the executable product's own price/NAV already contains its TER
+  (`TER_eu`). A US ETF proxy already contains its own TER (`TER_us`, recorded in the
+  registry); its daily return is adjusted by `(TER_us − TER_eu) / 365` per calendar day so that
+  the realistic scenario carries exactly the executable product's TER (owner decision at T1).
+  An index series would contain no fee. The adjustment per scenario is in 8.2.
 - **Currency.** Products trade in EUR; no FX conversion fee. Underlying currency exposure is
   captured by the EUR conversion of the research series.
 - **Taxes** are out of scope and stated as such.
@@ -250,8 +256,9 @@ T1 stops and reports.
 
 | Series type | `zero` | `realistic` | `double` |
 |---|---|---|---|
-| Executable product's own series (contains 1 TER) | add back 1 TER | deduct 0 | deduct 1 more |
-| Index or other proxy (contains 0) | deduct 0 | deduct 1 | deduct 2 |
+| Executable product's own series (contains `TER_eu`) | add back `TER_eu` | 0 | deduct `TER_eu` more |
+| US ETF proxy (contains `TER_us`) | add back `TER_us` | add back `TER_us`, deduct `TER_eu` | add back `TER_us`, deduct 2 × `TER_eu` |
+| Index series (contains no fee; none in the T1 universe) | 0 | deduct `TER_eu` | deduct 2 × `TER_eu` |
 
 ### 8.3 Capital grid
 
@@ -279,13 +286,15 @@ never affect the verdict.
 ## 9. Benchmarks (same costs, same calendar)
 
 - **Equal weight, always invested:** `1/N` in every universe asset.
-- **Global 60/40:** 60 % global equities, 40 % investment-grade bonds, each mapped to a UCITS
-  product in T1.
+- **Global 60/40:** 60 % global equities (MSCI ACWI) and 40 % euro-area government bonds
+  (the `EZ_GOV` asset), approved by the owner at T1. **Annual rebalance**, decided at `D` of
+  the last master-calendar day of each year.
 - **EUR cash:** section 6.5.
 
 Both invested benchmarks start each partition in cash and pay their initial purchases, exactly
 like the strategy. Their initial purchase is decided at `D` of the partition's first session;
-monthly rebalancing is decided at `D` of the last master-calendar day of each month. Both fill
+equal-weight rebalancing is decided at `D` of the last master-calendar day of each month, the
+60/40 rebalancing at `D` of the last master-calendar day of each year. Both fill
 at the next close (section 6.4), with the same whole-unit, cost and cash rules.
 
 ## 10. Partitions and the sealed test
@@ -437,7 +446,7 @@ Names may change; the economic rule, protocol and gates may not.
    prices are not used. Section 6.4.
 6. **Branch:** `feature/multi-asset-trend`, created from `main` before T1.
 
-### T1 clarifications (2026-11-14, before any result; pending owner approval of T1)
+### T1 clarifications (2026-11-14, before any result; see owner decisions below)
 
 - **Universe:** 11 assets in `app/trend/registry/universe.json`, all executable on Xetra in EUR.
   Research series rule: the product's own Yahoo series if it starts on or before 2008-12-31,
@@ -452,3 +461,28 @@ Names may change; the economic rule, protocol and gates may not.
   listed by the audit.
 - **Costs:** commission IBKR Pro Fixed (Xetra) 0.05 %, minimum EUR 3, no maximum, from
   secondary sources; spreads and slippage are documented estimates by liquidity class.
+
+## 18. Owner decisions at T1 (2026-11-14, before any result)
+
+1. **Commission:** IBKR Pro Fixed kept (0.05 %, minimum EUR 3), confirmed by the owner against
+   the IBKR Ireland price list. Source and date are recorded in the registry and the manifest.
+2. **Spread and slippage:** the class estimates are approved; each asset's tier is recorded in
+   the manifest (`costs.asset_tiers`). Real values are measured in the demo phase.
+3. **Global 60/40:** approved, with annual rebalance, start in cash and the same costs as the
+   other benchmarks (section 9).
+4. **Series rule:** approved with three conditions.
+   (a) If no US ETF tracks the product's own index, the asset is excluded; it is never replaced
+   by a similar index. Enforced mechanically: a proxy's `tracks` must equal the product's
+   `tracks` (`series_rule_violations`); the replay refuses to run otherwise.
+   (b) Signal and EUR conversion use only values known at `D(T)`, given that the US close is
+   later than the European one (section 6.1, data rule `availability`).
+   (c) The TER difference between the US ETF and the European product is adjusted
+   (sections 8.1, 8.2, data rule `ter`).
+5. **Asset list:** pending owner review. T2 does not start before it is approved. Open points
+   at the time of writing: `JAPAN_EQ` and `EM_EQ` violate condition (a) (IMI products against
+   non-IMI US proxies); `COMMOD`'s only long US history is an ETN (DJP), not an ETF.
+
+**Manifest amendment.** The manifest was amended, not rebuilt: files, window, partitions,
+audit and parameters are unchanged; the universe hash, data rules and cost table were refreshed,
+and `amendments[]` chains the hash of the replaced manifest
+(`93d4e409…` → `5f50f2ae…`). Amendments are allowed only before the first result.

@@ -33,6 +33,7 @@ class SeriesSpec:
     calendar: str
     kind: str
     tracks: str
+    ter_pct: float | None = None  # a proxy fund's own TER (condition c); None for own series
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,7 @@ def _series(d: dict[str, Any], where: str) -> SeriesSpec:
             calendar=d["calendar"],
             kind=d["kind"],
             tracks=d["tracks"],
+            ter_pct=None if d.get("ter_pct") is None else float(d["ter_pct"]),
         )
     except KeyError as exc:
         raise UniverseError(f"{where}: research field missing: {exc}") from exc
@@ -93,6 +95,10 @@ def _series(d: dict[str, Any], where: str) -> SeriesSpec:
         raise UniverseError(f"{where}: unsupported kind {s.kind!r}")
     if s.kind == "product_own" and s.currency != "EUR":
         raise UniverseError(f"{where}: a product's own series must be the EUR line")
+    if s.kind == "proxy" and (s.ter_pct is None or not 0 <= s.ter_pct < 2):
+        raise UniverseError(f"{where}: a proxy needs its own TER (ter_pct)")
+    if s.kind == "product_own" and s.ter_pct is not None:
+        raise UniverseError(f"{where}: an own series carries the product TER, not ter_pct")
     return s
 
 
@@ -167,6 +173,20 @@ def parse_universe(raw: dict[str, Any]) -> Universe:
             raise UniverseError(f"commission field missing: {key}")
     digest = hashlib.sha256(canonical_json(raw).encode()).hexdigest()
     return Universe(assets=assets, benchmark_only=tuple(extra), raw=raw, sha256=digest)
+
+
+def series_rule_violations(universe: Universe) -> list[str]:
+    """Owner condition (a): a proxy must track exactly the executable product's index.
+
+    An asset listed here must be excluded or given a product that matches; it is never kept with
+    a "similar" index. The replay (T2) refuses to run while this list is not empty.
+    """
+    return [
+        f"{a.id}: proxy {a.research.symbol} tracks {a.research.tracks!r}, "
+        f"product {a.product.ticker} tracks {a.product.tracks!r}"
+        for a in universe.all_series()
+        if a.research.kind == "proxy" and a.research.tracks != a.product.tracks
+    ]
 
 
 def load_universe(path: Path = UNIVERSE_PATH) -> Universe:

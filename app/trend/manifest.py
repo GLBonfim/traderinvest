@@ -43,7 +43,85 @@ DATA_RULES = {
     ),
     "master_calendar": "Union of the universe assets' provider rows.",
     "data_end": "Last complete session before the snapshot; later rows are ignored.",
+    "availability": (
+        "At D(T) = 23:00 Europe/Lisbon the signal and the EUR conversion use only values already "
+        "published: Xetra close (17:30 CET), ECB reference rate (~16:00 CET) and US close (16:00 "
+        "New York), all earlier than D(T) on every day. Fills happen at the asset's next close."
+    ),
+    "ter": (
+        "TER accrues per calendar day (TER / 365). An own series contains the product TER; a US "
+        "ETF proxy contains its own TER and is adjusted by (TER_us - TER_eu) / 365 per calendar "
+        "day. Scenario zero adds back the TER the series contains; double deducts one more "
+        "TER_eu."
+    ),
 }
+
+
+# Fields that describe the data and the split; an amendment must leave them untouched.
+DATA_FIELDS = (
+    "snapshot",
+    "files",
+    "data_end",
+    "window",
+    "partitions",
+    "audit_verdict",
+    "audit_sha256",
+    "parameters",
+)
+
+
+def cost_table(universe: Universe) -> dict[str, Any]:
+    """Commission and per-asset cost tier as registered (values copied from the universe)."""
+    raw = universe.raw
+    classes = raw["cost_classes"]
+    commission = raw["commission"]
+    tiers = {}
+    for a in universe.all_series():
+        c = classes[a.cost_class]
+        tiers[a.id] = {
+            "product": a.product.ticker,
+            "isin": a.product.isin,
+            "cost_class": a.cost_class,
+            "half_spread_pct": c["half_spread_pct"],
+            "slippage_pct": c["slippage_pct"],
+            "ter_eu_pct": a.product.ter_pct,
+            "ter_proxy_pct": a.research.ter_pct,
+        }
+    keys = (
+        "broker",
+        "rate_pct",
+        "minimum_eur",
+        "maximum_eur",
+        "source_status",
+        "confirmed_by_owner_on",
+    )
+    return {
+        "commission": {k: commission.get(k) for k in keys},
+        "spread_slippage_status": classes["status"],
+        "asset_tiers": tiers,
+    }
+
+
+def amend_manifest(
+    previous: dict[str, Any], universe: Universe, date: str, reason: str
+) -> dict[str, Any]:
+    """New manifest recording registry/rule changes made before any result.
+
+    The data part (files, window, partitions, audit, parameters) is copied unchanged; the
+    universe hash, data rules and cost table are refreshed; the chain keeps the hash of the
+    manifest being replaced. Allowed only before the first result (the T2 guard enforces it).
+    """
+    amended = {k: v for k, v in previous.items() if k != "amendments"}
+    amended["universe_sha256"] = universe.sha256
+    amended["data_rules"] = DATA_RULES
+    amended["costs"] = cost_table(universe)
+    chain = list(previous.get("amendments", []))
+    chain.append({"date": date, "previous_sha256": manifest_sha256(previous), "reason": reason})
+    amended["amendments"] = chain
+    for key in DATA_FIELDS:
+        if amended.get(key) != previous.get(key):
+            raise ValueError(f"amendment would change data field {key!r}")
+    return amended
 
 
 def manifest_sha256(manifest: dict[str, Any]) -> str:
@@ -142,6 +220,7 @@ def build_manifest(
         "partitions": audit_report["partitions"],
         "audit_verdict": audit_report["verdict"],
         "audit_sha256": hashlib.sha256(canonical_json(audit_report).encode()).hexdigest(),
+        "costs": cost_table(universe),
         "parameters": {
             "sma_sessions": 200,
             "vol_sessions": 60,

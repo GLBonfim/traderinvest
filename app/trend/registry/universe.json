@@ -3,7 +3,13 @@
   "frozen_on": "2026-11-14",
   "frozen_before": "any download of price history, moving average, signal or return statistic",
   "inputs_seen_before_freezing": "series first dates and row counts only; product facts (TER, listing, inception) from justETF on 2026-11-14",
-  "series_rule": "Use the executable product's own Yahoo Finance series when it starts on or before 2008-12-31; otherwise use the US-listed ETF/ETN that tracks the same index or, failing that, the closest index. The rule is mechanical and does not depend on returns.",
+  "series_rule": "Use the executable product's own Yahoo Finance series when it starts on or before 2008-12-31; otherwise use the US-listed ETF that tracks the same index as the product. The rule is mechanical and does not depend on returns.",
+  "series_rule_conditions": {
+    "approved_by_owner_on": "2026-11-14",
+    "a_same_index_or_exclude": "If no US-listed ETF tracks the product's own index, the asset is excluded; it is never replaced by a similar index. Checked mechanically: a proxy's 'tracks' must equal the product's 'tracks'.",
+    "b_known_at_decision": "The signal and the EUR conversion use only values published before D(T) = 23:00 Europe/Lisbon. The US close (16:00 New York = 20:00-21:00 Lisbon) is later than the Xetra close (17:30 CET) and the ECB rate (~16:00 CET), and all three precede D(T) on every day, including the weeks when US and EU daylight-saving dates differ.",
+    "c_ter_difference": "A US ETF proxy already contains its own TER; its daily return is adjusted by (TER_us - TER_eu) / 365 per calendar day so that the realistic scenario carries exactly the executable product's TER."
+  },
   "execution_venue": "XETR (Xetra), trading currency EUR, for every executable product",
   "assets": [
     {
@@ -11,7 +17,7 @@
       "bucket": "equities",
       "exposure": "US large-cap equities, unhedged to EUR",
       "rationale": "Largest equity market; its own driver (US earnings, USD).",
-      "research": {"source": "yahoo", "symbol": "SPY", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "tracks": "S&P 500"},
+      "research": {"source": "yahoo", "symbol": "SPY", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "ter_pct": 0.0945, "ter_source": "State Street SPDR", "tracks": "S&P 500"},
       "product": {"isin": "IE00B5BMR087", "name": "iShares Core S&P 500 UCITS ETF USD (Acc)", "ticker": "SXR8", "ter_pct": 0.07, "distribution": "accumulating", "inception": "2010-05-19", "structure": "UCITS ETF, physical", "tracks": "S&P 500"},
       "cost_class": "A"
     },
@@ -29,7 +35,7 @@
       "bucket": "equities",
       "exposure": "Japanese equities, unhedged to EUR",
       "rationale": "Separate economy, monetary policy and currency (JPY).",
-      "research": {"source": "yahoo", "symbol": "EWJ", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "tracks": "MSCI Japan"},
+      "research": {"source": "yahoo", "symbol": "EWJ", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "ter_pct": 0.49, "ter_source": "iShares US product page", "tracks": "MSCI Japan"},
       "product": {"isin": "IE00B4L5YX21", "name": "iShares Core MSCI Japan IMI UCITS ETF", "ticker": "EUNN", "ter_pct": 0.12, "distribution": "accumulating", "inception": "2009-09-25", "structure": "UCITS ETF, physical", "tracks": "MSCI Japan IMI"},
       "cost_class": "B"
     },
@@ -38,7 +44,7 @@
       "bucket": "equities",
       "exposure": "Pacific ex-Japan equities (Australia, Hong Kong, Singapore, New Zealand), unhedged",
       "rationale": "Commodity- and China-linked developed markets not covered by the other regions.",
-      "research": {"source": "yahoo", "symbol": "EPP", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "tracks": "MSCI Pacific ex Japan"},
+      "research": {"source": "yahoo", "symbol": "EPP", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "ter_pct": 0.47, "ter_source": "Trackinsight / ETF Central", "tracks": "MSCI Pacific ex Japan"},
       "product": {"isin": "IE00B52MJY50", "name": "iShares Core MSCI Pacific ex Japan UCITS ETF (Acc)", "ticker": "SXR1", "ter_pct": 0.20, "distribution": "accumulating", "inception": "2010-01-12", "structure": "UCITS ETF, physical", "tracks": "MSCI Pacific ex Japan"},
       "cost_class": "B"
     },
@@ -47,7 +53,7 @@
       "bucket": "equities",
       "exposure": "Emerging-market equities, unhedged",
       "rationale": "Different growth, political and currency drivers from developed markets.",
-      "research": {"source": "yahoo", "symbol": "EEM", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "tracks": "MSCI Emerging Markets"},
+      "research": {"source": "yahoo", "symbol": "EEM", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "ter_pct": 0.70, "ter_source": "secondary sources range 0.68-0.72", "tracks": "MSCI Emerging Markets"},
       "product": {"isin": "IE00BKM4GZ66", "name": "iShares Core MSCI Emerging Markets IMI UCITS ETF (Acc)", "ticker": "IS3N", "ter_pct": 0.18, "distribution": "accumulating", "inception": "2014-05-30", "structure": "UCITS ETF, physical", "tracks": "MSCI Emerging Markets IMI"},
       "cost_class": "A"
     },
@@ -65,7 +71,7 @@
       "bucket": "government_bonds",
       "exposure": "US Treasuries 7-10 years, unhedged to EUR",
       "rationale": "Different rate cycle (Federal Reserve) and USD; historically defensive in global equity stress.",
-      "research": {"source": "yahoo", "symbol": "IEF", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "tracks": "ICE US Treasury 7-10 Year"},
+      "research": {"source": "yahoo", "symbol": "IEF", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "ter_pct": 0.15, "ter_source": "iShares (not re-checked on 2026-11-14)", "tracks": "ICE US Treasury 7-10 Year"},
       "product": {"isin": "IE00B1FZS798", "name": "iShares USD Treasury Bond 7-10yr UCITS ETF (Dist)", "ticker": "IUSM", "ter_pct": 0.07, "distribution": "distributing", "inception": "2006-12-08", "structure": "UCITS ETF, physical", "tracks": "ICE US Treasury 7-10 Year"},
       "cost_class": "B"
     },
@@ -83,8 +89,8 @@
       "bucket": "gold",
       "exposure": "Physical gold priced in USD, unhedged to EUR",
       "rationale": "No cash flows; responds to real rates, the dollar and crisis demand.",
-      "research": {"source": "yahoo", "symbol": "GLD", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "tracks": "LBMA gold price"},
-      "product": {"isin": "IE00B579F325", "name": "Invesco Physical Gold ETC", "ticker": "8PSG", "ter_pct": 0.12, "distribution": "accumulating", "inception": "2009-06-25", "structure": "ETC (not UCITS), physically backed", "tracks": "Gold spot (USD)"},
+      "research": {"source": "yahoo", "symbol": "GLD", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "ter_pct": 0.40, "ter_source": "secondary database 2026", "tracks": "Gold (LBMA Gold Price, USD)"},
+      "product": {"isin": "IE00B579F325", "name": "Invesco Physical Gold ETC", "ticker": "8PSG", "ter_pct": 0.12, "distribution": "accumulating", "inception": "2009-06-25", "structure": "ETC (not UCITS), physically backed", "tracks": "Gold (LBMA Gold Price, USD)"},
       "cost_class": "B"
     },
     {
@@ -92,8 +98,8 @@
       "bucket": "commodities",
       "exposure": "Broad commodity futures (energy, metals, agriculture), unhedged",
       "rationale": "Inflation- and supply-shock driver absent from stocks and bonds.",
-      "research": {"source": "yahoo", "symbol": "DJP", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "tracks": "Bloomberg Commodity Index Total Return (ETN)"},
-      "product": {"isin": "IE00BDFL4P12", "name": "iShares Diversified Commodity Swap UCITS ETF", "ticker": "SXRS", "ter_pct": 0.19, "distribution": "accumulating", "inception": "2017-07-18", "structure": "UCITS ETF, synthetic (unfunded swap)", "tracks": "Bloomberg Commodity"},
+      "research": {"source": "yahoo", "symbol": "DJP", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "ter_pct": 0.75, "ter_source": "Barclays pricing supplements (yearly investor fee)", "tracks": "Bloomberg Commodity Index Total Return"},
+      "product": {"isin": "IE00BDFL4P12", "name": "iShares Diversified Commodity Swap UCITS ETF", "ticker": "SXRS", "ter_pct": 0.19, "distribution": "accumulating", "inception": "2017-07-18", "structure": "UCITS ETF, synthetic (unfunded swap)", "tracks": "Bloomberg Commodity Index Total Return"},
       "cost_class": "C"
     },
     {
@@ -107,14 +113,14 @@
     }
   ],
   "benchmarks": {
-    "equal_weight": {"description": "1/N in every universe asset, always invested, monthly rebalance"},
+    "equal_weight": {"description": "1/N in every universe asset, always invested; starts in cash, monthly rebalance"},
     "sixty_forty": {
-      "description": "60% global equities + 40% euro-area government bonds (a EUR investor's balanced portfolio), monthly rebalance",
+      "description": "60% global equities + 40% euro-area government bonds (a EUR investor's balanced portfolio); starts in cash, annual rebalance decided at D of the last master-calendar day of each year, same costs and fill rules as the other benchmarks (owner decision 2026-11-14)",
       "legs": [
         {
           "id": "GLOBAL_EQ",
           "weight": 0.60,
-          "research": {"source": "yahoo", "symbol": "ACWI", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "tracks": "MSCI ACWI"},
+          "research": {"source": "yahoo", "symbol": "ACWI", "currency": "USD", "calendar": "XNYS", "kind": "proxy", "ter_pct": 0.32, "ter_source": "Seeking Alpha / ETF Database", "tracks": "MSCI ACWI"},
           "product": {"isin": "IE00B6R52259", "name": "iShares MSCI All Country World UCITS ETF USD (Acc)", "ticker": "IUSQ", "ter_pct": 0.20, "distribution": "accumulating", "inception": "2011-10-21", "structure": "UCITS ETF, physical", "tracks": "MSCI ACWI"},
           "cost_class": "C"
         },
@@ -132,7 +138,7 @@
     "timing": "Interest from T-1 to T uses the rate for T-1, published on the morning of T (causal at D(T))."
   },
   "cost_classes": {
-    "status": "ESTIMATES, not measurements: no free, machine-readable Xetra spread source was found on 2026-11-14 (Deutsche Boerse pages load spreads by script).",
+    "status": "ESTIMATES, not measurements: no free, machine-readable Xetra spread source was found on 2026-11-14 (Deutsche Boerse pages load spreads by script). Approved by the owner on 2026-11-14; real values are measured in the demo phase.",
     "A": {"half_spread_pct": 0.03, "slippage_pct": 0.02, "meaning": "very large, very liquid core ETFs"},
     "B": {"half_spread_pct": 0.05, "slippage_pct": 0.03, "meaning": "large single-region equity, bond and gold products"},
     "C": {"half_spread_pct": 0.10, "slippage_pct": 0.05, "meaning": "swap-based commodity, property and smaller global funds"}
@@ -144,14 +150,27 @@
     "maximum_eur": null,
     "includes_exchange_fees": true,
     "surveyed_on": "2026-11-14",
-    "source_status": "Secondary sources (bankeronwheels.com, 2026). IBKR's own pricing pages refused automated access (HTTP 403); the owner should confirm the figures in the IBKR account before T3.",
+    "source_status": "Confirmed by the owner against the IBKR Ireland price list (commissions, Germany/Xetra, IBKR Pro Fixed) on 2026-11-14.",
+    "confirmed_by_owner_on": "2026-11-14",
+    "secondary_sources": "bankeronwheels.com (2026); IBKR pages refused automated access (HTTP 403) during the survey",
     "alternative_not_used": "IBKR Pro Tiered: 0.05%, minimum EUR 1.25, maximum EUR 29, plus exchange/clearing fees."
+  },
+  "pending_owner_review": {
+    "status": "The list of assets awaits the owner's review (2026-11-14). T2 does not start before it is approved.",
+    "series_rule_violations": [
+      "JAPAN_EQ: proxy EWJ tracks MSCI Japan, product EUNN tracks MSCI Japan IMI (condition a)",
+      "EM_EQ: proxy EEM tracks MSCI Emerging Markets, product IS3N tracks MSCI Emerging Markets IMI (condition a)"
+    ],
+    "questions": [
+      "COMMOD: the only long US history of the Bloomberg Commodity Index TR is DJP, an ETN (Barclays note), not an ETF."
+    ]
   },
   "known_limitations": [
     "US-listed proxies trade during US hours (Xetra products trade during European hours); converted with the ECB rate published before the US close.",
     "US-listed proxies pay dividends gross of the 15% US withholding that Irish UCITS funds suffer; not adjusted (no new parameter).",
     "DJP is an ETN (issuer credit risk); used only as a history of the Bloomberg Commodity total-return index.",
     "Spreads and slippage are constant estimates; historical spreads (e.g. 2009-2012) were likely wider.",
+    "US proxy TERs are held constant at their 2026-11-14 values over the whole history; past TERs differed (usually higher).",
     "IBKR pays no interest on the first EUR 10,000 of cash and benchmark minus 0.5 p.p. above it (secondary-source snapshot); the protocol's cash rate is EUR STR minus 0.25 p.p. for every capital."
   ]
 }

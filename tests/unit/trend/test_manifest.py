@@ -3,7 +3,14 @@ from pathlib import Path
 from typing import Any
 
 from app.core.integrity import atomic_write, canonical_json
-from app.trend.manifest import SCHEMA, manifest_sha256, verify_manifest
+from app.trend.manifest import (
+    DATA_FIELDS,
+    SCHEMA,
+    amend_manifest,
+    cost_table,
+    manifest_sha256,
+    verify_manifest,
+)
 from app.trend.sources import sha256_file
 from app.trend.universe import load_universe
 
@@ -47,3 +54,45 @@ def test_reused_integrity_primitives(tmp_path: Path) -> None:
     atomic_write(target, json.dumps({"x": 1}))
     assert json.loads(target.read_text(encoding="utf-8")) == {"x": 1}
     assert not (tmp_path / "out.json.tmp").exists()
+
+
+def _full_manifest(tmp_path: Path) -> dict[str, Any]:
+    m = _manifest(tmp_path)
+    return m | {
+        "snapshot": "snap",
+        "data_end": "2026-11-13",
+        "window": {"evaluable_start": "2009-10-08"},
+        "partitions": {"sealed": {"start": "2023-06-01"}},
+        "audit_verdict": "PASS",
+        "audit_sha256": "a" * 64,
+        "parameters": {"sma_sessions": 200},
+        "universe_sha256": "0" * 64,
+    }
+
+
+def test_amendment_keeps_data_and_chains_hash(tmp_path: Path) -> None:
+    old = _full_manifest(tmp_path)
+    u = load_universe()
+    new = amend_manifest(old, u, "2026-11-14", "owner decisions")
+    for key in DATA_FIELDS:
+        assert new.get(key) == old.get(key)
+    assert new["universe_sha256"] == u.sha256
+    assert new["amendments"] == [
+        {"date": "2026-11-14", "previous_sha256": manifest_sha256(old), "reason": "owner decisions"}
+    ]
+    again = amend_manifest(new, u, "2026-11-15", "second")
+    assert [a["previous_sha256"] for a in again["amendments"]] == [
+        manifest_sha256(old),
+        manifest_sha256(new),
+    ]
+    assert verify_manifest(again, tmp_path, u) == []
+
+
+def test_cost_table_lists_every_series_tier() -> None:
+    u = load_universe()
+    table = cost_table(u)
+    assert set(table["asset_tiers"]) == {a.id for a in u.all_series()}
+    assert table["asset_tiers"]["GLOBAL_RE"]["cost_class"] == "C"
+    assert table["asset_tiers"]["US_EQ"]["ter_proxy_pct"] == 0.0945
+    assert table["asset_tiers"]["EUROPE_EQ"]["ter_proxy_pct"] is None
+    assert table["commission"]["confirmed_by_owner_on"] == "2026-11-14"

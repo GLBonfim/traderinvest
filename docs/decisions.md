@@ -553,3 +553,12 @@ across a diversified universe, with fixed parameters and one sealed test.
 designed demo (IBKR paper) stage; `INSUFFICIENT EVIDENCE` with all gates passed may also proceed
 to demo, with any real-money decision deferred; an evaluation failure stops the work;
 `NO STATISTICAL EDGE FOUND` ends it. Creating variants to rescue a result is forbidden.
+
+**Amendment (2026-11-14, owner decisions at T1, before any result).** Commission IBKR Pro
+Fixed confirmed against the IBKR Ireland price list; spread/slippage estimates approved with
+each asset's tier in the manifest; global 60/40 rebalanced annually, starting in cash, same
+costs. Proxy rule: a US ETF proxy must track the product's own index or the asset is excluded
+(never a similar index); signal and EUR conversion use only values known at `D(T)`; a proxy's
+return is adjusted by the TER difference `(TER_us − TER_eu)`. The manifest is amended with a
+hash chain (data, window and split unchanged). The asset list awaits the owner's review; T2
+does not start before it. Design section 18.

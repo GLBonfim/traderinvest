@@ -20,6 +20,11 @@ versioning: [SemVer](https://semver.org/).
   frozen manifest (`registry/manifest.json`, `registry/audit.json`) and CLI
   `python -m app.trend.cli fetch|audit|verify`. Owner report:
   `docs/trend/t1-universo-e-dados.md`. 22 tests in `tests/unit/trend`.
+- Owner decisions at T1 (design section 18, ADR-0040 amendment): commission confirmed, cost
+  tiers per asset and 60/40 annual rebalance recorded; proxy TERs added to the registry with the
+  `(TER_us − TER_eu)` adjustment rule; `series_rule_violations` enforces "same index or exclude";
+  `cli amend` amends the manifest with a hash chain (data unchanged; `93d4e409…` →
+  `5f50f2ae…`); `cli verify` reports rule violations, which block the replay. 27 tests.
 
 ## [Unreleased] — earlier, branch `feature/alpaca-paper-validation`
 
