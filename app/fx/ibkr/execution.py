@@ -196,6 +196,83 @@ class IbkrPaperExecutor:
         except LookupError:
             return amount
 
+    async def confirmed_commission(self, client_order_id: str) -> dict[str, Any] | None:
+        """Confirmed execution fees, with complete quantities and a fresh LIVE conversion.
+
+        None means pending/invalid evidence, never a zero-cost assumption. Native
+        execution details let callers detect corrections before final accounting.
+        """
+        trade = next(
+            (
+                t
+                for t in self.client.trades()
+                if getattr(t.order, "orderRef", "") == client_order_id
+            ),
+            None,
+        )
+        if trade is None:
+            trade = next(
+                (
+                    t
+                    for t in await self.client.reqCompletedOrdersAsync(apiOnly=True)
+                    if getattr(t.order, "orderRef", "") == client_order_id
+                ),
+                None,
+            )
+        if trade is None or not float(trade.orderStatus.filled or 0.0) > 0:
+            return None
+        cache = getattr(self.client, "fills", None)
+        reports = {
+            f.execution.execId: f.commissionReport for f in (cache() if callable(cache) else [])
+        }
+        quotes = {
+            s: q
+            for s, q in self._last_quotes.items()
+            if q.origin is DataOrigin.LIVE
+            and abs((self.clock() - q.ts).total_seconds()) <= self.quote_max_age_s
+        }
+        executions: dict[str, Any] = {}
+        total = quantity = 0.0
+        for fill in getattr(trade, "fills", []) or []:
+            ex, report = fill.execution, getattr(fill, "commissionReport", None)
+            fid = str(ex.execId)
+            if getattr(report, "execId", "") != fid or not getattr(report, "currency", ""):
+                report = reports.get(fid, report)
+            if report is None:
+                return None
+            try:
+                fee, units, price = float(report.commission), float(ex.shares), float(ex.price)
+                currency = str(report.currency)
+            except (AttributeError, TypeError, ValueError):
+                return None
+            if (
+                not fid
+                or getattr(report, "execId", "") != fid
+                or not currency
+                or not all(math.isfinite(x) for x in (fee, units, price))
+                or not 0 <= fee < 1e9
+                or units <= 0
+                or price <= 0
+            ):
+                return None
+            item = {"fee": fee, "currency": currency, "units": units, "price": price}
+            if fid in executions:
+                if executions[fid] != item:
+                    return None
+                continue
+            try:
+                rate = 1.0 if fee == 0 else Converter(quotes).rate(currency, self.currency)
+            except LookupError:
+                return None
+            if not math.isfinite(rate) or rate <= 0:
+                return None
+            executions[fid] = item
+            total += fee * rate
+            quantity += units
+        if not executions or abs(quantity - float(trade.orderStatus.filled)) > 1e-6:
+            return None
+        return {"total": total, "executions": executions}
+
     async def min_tick(self, symbol: str) -> float:
         if symbol not in self._ticks:
             details = await self.client.reqContractDetailsAsync(self.contract_factory(symbol))
@@ -292,8 +369,14 @@ class IbkrPaperExecutor:
 
     # --- orders ------------------------------------------------------------------------------
 
-    async def place_bracket(self, req: OrderRequest) -> OrderStatus:
-        """Market entry + take profit + stop (OCA). Requires a stop and a target."""
+    async def place_bracket(
+        self, req: OrderRequest, guard: Callable[[], None] | None = None
+    ) -> OrderStatus:
+        """Market entry + take profit + stop (OCA). Requires a stop and a target.
+
+        The optional guard runs after all awaits, immediately before the first leg.
+        A veto sends no bracket leg; once started, all protective legs are submitted.
+        """
         if req.stop_loss is None or req.take_profit is None or req.reduce_only:
             raise ExecutionError("a pilot entry needs a stop and a target", ambiguous=False)
         self.verify_paper()
@@ -331,6 +414,8 @@ class IbkrPaperExecutor:
             )
         for o in (parent, tp, sl):
             o.account = account
+        if guard is not None:
+            guard()  # no await between the final veto and the first bracket leg
         trade = self.client.placeOrder(contract, parent)
         tp.parentId = sl.parentId = trade.order.orderId
         tp.transmit = False

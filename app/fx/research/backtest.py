@@ -117,7 +117,7 @@ def run_backtest(
                 op, hi, lo, cl = ao[j], ah[j], al[j], ac[j]
             px, why = np.nan, ""
             if d > 0:
-                if j > e_bar and op <= stop:
+                if op <= stop:
                     px, why = op, "stop_gap"
                 elif lo <= stop:
                     px, why = stop, "stop"
@@ -126,7 +126,7 @@ def run_backtest(
                 elif hi >= target:
                     px, why = target, "target"
             else:
-                if j > e_bar and op >= stop:
+                if op >= stop:
                     px, why = op, "stop_gap"
                 elif hi >= stop:
                     px, why = stop, "stop"
@@ -190,11 +190,23 @@ def summarize(trades: pd.DataFrame, days: float | None = None) -> dict[str, floa
             "profit_factor": 0.0,
             "total_r": 0.0,
             "max_dd_r": 0.0,
+            "realized_max_dd_r": 0.0,
             "t_stat": 0.0,
             "mean_cost_r": 0.0,
         }
     wins, losses = r[r > 0].sum(), -r[r < 0].sum()
-    equity = np.concatenate([[0.0], np.cumsum(r)])  # the curve starts at 0 R (no trade yet)
+    # Realized closes only: simultaneous closes are one portfolio cash-flow event.
+    # Legacy callers without timestamps retain their explicitly supplied sequence.
+    realized = r
+    if "exit_ts" in trades:
+        realized = (
+            pd.Series(r, index=pd.to_datetime(trades["exit_ts"], utc=True))
+            .groupby(level=0)
+            .sum()
+            .sort_index()
+            .to_numpy()
+        )
+    equity = np.concatenate([[0.0], np.cumsum(realized)])
     dd = float(np.max(np.maximum.accumulate(equity) - equity))
     sd = float(np.std(r, ddof=1)) if n > 1 else 0.0
     out = {
@@ -205,6 +217,7 @@ def summarize(trades: pd.DataFrame, days: float | None = None) -> dict[str, floa
         "profit_factor": float(wins / losses) if losses > 0 else float("inf"),
         "total_r": float(r.sum()),
         "max_dd_r": dd,
+        "realized_max_dd_r": dd,
         "t_stat": float(r.mean() / sd * np.sqrt(n)) if sd > 0 else 0.0,
         "mean_cost_r": float(trades["r_cost"].mean()),
         "mean_bars": float(trades["bars"].mean()),

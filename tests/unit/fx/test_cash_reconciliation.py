@@ -198,3 +198,54 @@ def test_req_execution_copies_use_confirmed_public_commission_cache(
     ib.cash["EUR"] -= 1001.7795
     ib.cash["USD"] += 1120
     assert asyncio.run(guard()) == {"EURUSD": -1000}
+
+
+def test_pending_commission_remains_distinguishable_from_cash_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.fx.ibkr.cash_reconciliation import CommissionPendingError
+
+    guard, ib, store = setup(tmp_path)
+    pending = fill()
+    pending.commissionReport.execId = ""
+    pending.commissionReport.currency = ""
+    ib.fills = [pending]
+
+    async def no_delay(_: float) -> None:
+        pass
+
+    monkeypatch.setattr("app.fx.ibkr.cash_reconciliation.asyncio.sleep", no_delay)
+    before = store.get_state("cash_reconciliation")
+    with pytest.raises(CommissionPendingError):
+        asyncio.run(guard())
+    assert store.get_state("cash_reconciliation") == before
+
+
+@pytest.mark.parametrize("fee", [1e308, float.fromhex("0x1.fffffffffffffp+1023")])
+def test_ibkr_finite_commission_sentinel_is_pending_not_invalid_cash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fee: float
+) -> None:
+    from app.fx.ibkr.cash_reconciliation import CommissionPendingError
+
+    guard, ib, store = setup(tmp_path)
+    ib.fills = [fill(fee=fee)]
+
+    async def no_delay(_: float) -> None:
+        pass
+
+    monkeypatch.setattr("app.fx.ibkr.cash_reconciliation.asyncio.sleep", no_delay)
+    before = store.get_state("cash_reconciliation")
+    with pytest.raises(CommissionPendingError):
+        asyncio.run(guard())
+    assert store.get_state("cash_reconciliation") == before
+
+
+@pytest.mark.parametrize("fee", [float("inf"), float("nan"), -1.0, 101.0])
+def test_genuinely_invalid_commission_still_fails_closed(tmp_path: Path, fee: float) -> None:
+    from app.fx.ibkr.cash_reconciliation import CommissionPendingError
+
+    guard, ib, _ = setup(tmp_path)
+    ib.fills = [fill(fee=fee)]
+    with pytest.raises(ExecutionError) as error:
+        asyncio.run(guard())
+    assert not isinstance(error.value, CommissionPendingError)

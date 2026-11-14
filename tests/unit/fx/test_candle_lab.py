@@ -91,7 +91,7 @@ def test_handoff_is_journaled_before_paper_entry(
     )
     c = context()
     c["bar_close"] = pd.Timestamp(NOW).floor("h").isoformat()
-    monkeypatch.setattr(candle_lab, "market_analysis", lambda _: c)
+    monkeypatch.setattr(candle_lab, "market_analysis", lambda _, **kwargs: c)
     asyncio.run(lab.cycle())
     assert len(ib.placed) == 3  # exactly one bracket, never three competing entries
     assert lab.store.recent(kinds=("pilot_market_analysis",))
@@ -192,9 +192,9 @@ def test_funded_policy_does_not_hide_conflicting_specialist(
     )
     c = context()
     c["bar_close"] = pd.Timestamp(NOW).floor("h").isoformat()
-    monkeypatch.setattr(candle_lab, "market_analysis", lambda _: c)
+    monkeypatch.setattr(candle_lab, "market_analysis", lambda _, **kwargs: c)
 
-    def disagree(role, *_):
+    def disagree(role, *_, **kwargs):
         return pd.Series({"dir": 1 if role == "reversao" else -1, "score": 0.8}), "test_pattern"
 
     monkeypatch.setattr(candle_lab, "specialist", disagree)
@@ -260,3 +260,80 @@ def test_disappearing_funding_position_is_ambiguous() -> None:
     with pytest.raises(ExecutionError) as caught:
         asyncio.run(positions_without_funding(missing, {"EURUSD": -1000.0})())
     assert caught.value.ambiguous
+
+
+@pytest.mark.parametrize("role", ["reversao", "continuacao", "impulso"])
+def test_enabled_lesson_requires_sequence_and_forecast(role, monkeypatch):
+    from app.candles.lesson_h1 import VERSION
+    from app.fx.ibkr import candle_lab
+
+    mid = mid_of(closed_model_bars(m15(), "EURUSD", "H1", NOW))
+    c = context()
+    c["trend"] = -1
+    for pattern in c["patterns"]:
+        pattern["direction"] = -1
+    c["lesson_h1"] = {"version": VERSION, "ready": True, "direction": -1}
+    monkeypatch.setattr(candle_lab, "model_signals", lambda *_: pd.DataFrame({"dir": [-1]}))
+    assert specialist(role, c, model(), mid, lesson_required=True) is not None
+    c["lesson_h1"]["ready"] = False
+    assert specialist(role, c, model(), mid, lesson_required=True) is None
+    c["lesson_h1"]["ready"] = True
+    monkeypatch.setattr(candle_lab, "model_signals", lambda *_: pd.DataFrame({"dir": [1]}))
+    assert specialist(role, c, model(), mid, lesson_required=True) is None
+
+
+def test_funded_h1_stop_during_entry_lookup_blocks_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from app.fx.ibkr import candle_lab
+    from app.fx.ibkr.candle_lab import FundedPaperExecutor
+    from tests.unit.fx.ibkr_fakes import FACTORY, contract
+
+    m = model("reversao", intercept=-1.0)
+    p, ib, _, clock = make(tmp_path, reg=registry(m), armed=True)
+    ib.cash["USD"] = 100_000.0
+    ex = FundedPaperExecutor(
+        ib,
+        orders=FACTORY,
+        contract_factory=contract,
+        clock=clock,
+        timeout_s=0.05,
+        poll_s=0.001,
+    )
+    cohort = {
+        "entry_until": (NOW + timedelta(days=7)).isoformat(),
+        "agents": [{"role": "reversao", "model": m.to_dict()}],
+    }
+    lab = CandleLab(
+        ex,
+        p.store,
+        p.registry,
+        p.fetch_bars,
+        p.fetch_positions,
+        cohort=cohort,
+        config=p.config,
+        armed=True,
+        clock=clock,
+        stop_file=tmp_path / "STOP",
+        funded_eur_only=True,
+        say=lambda _: None,
+    )
+    c = context()
+    c["trend"] = -1
+    c["bar_close"] = pd.Timestamp(NOW).floor("h").isoformat()
+    for pattern in c["patterns"]:
+        pattern["direction"] = -1
+    monkeypatch.setattr(candle_lab, "market_analysis", lambda _, **kwargs: c)
+
+    def stop_during_entry_qualification() -> None:
+        if lab.state.pending:
+            (tmp_path / "STOP").write_text("stop requested", encoding="utf-8")
+
+    ib.on_qualify = stop_during_entry_qualification
+    asyncio.run(lab.cycle())
+    assert (tmp_path / "STOP").exists()
+    assert ib.placed == [] and not lab.armed
+    assert lab.state.pending == {} and lab.state.open == {}
+    assert lab.risk.state.reservations == {}

@@ -45,7 +45,8 @@ from app.fx.agents.trained import BAR_HOURS, LinearModel, load_models, model_sig
 from app.fx.calendar import FxCalendar
 from app.fx.environment import Environment
 from app.fx.errors import EnvironmentMismatchError
-from app.fx.ibkr.execution import IbkrPaperExecutor, ReadOnlyApiError
+from app.fx.ibkr.cash_reconciliation import CommissionPendingError
+from app.fx.ibkr.execution import IbkrPaperExecutor, ReadOnlyApiError, SendBlockedError
 from app.fx.ibkr.paper import mask
 from app.fx.lifecycle import OrderState
 from app.fx.models import Direction, Quote, Side, pair
@@ -174,6 +175,7 @@ class PaperPilot:
         self.clock = clock
         self.calendar = calendar or FxCalendar()
         self.say = say
+        self._fee_reconciliation_pending = False
         self.models: dict[str, LinearModel] = {
             m["model_id"]: LinearModel.from_dict(m) for m in registry["models"]
         }
@@ -209,6 +211,8 @@ class PaperPilot:
     def _positions(self) -> dict[str, Position]:
         out: dict[str, Position] = {}
         for eid, t in self.state.open.items():
+            if t.get("closed_pending_fees"):
+                continue
             out[t["symbol"]] = Position(
                 t["symbol"],
                 t["units"],
@@ -225,6 +229,11 @@ class PaperPilot:
         cur = self.config.currency
         unrealized = margin = 0.0
         for t in self.state.open.values():
+            if t.get("closed_pending_fees"):
+                continue  # physically flat; net result remains provisional
+            fee = t.get("entry_commission")
+            if fee is not None:
+                unrealized -= fee  # accrued here; whole-close P&L debits it once later
             p = pair(t["symbol"])
             q = quotes.get(t["symbol"])
             with contextlib.suppress(LookupError):
@@ -247,6 +256,7 @@ class PaperPilot:
         """One pass: reconcile, protect/exit, then at most one new entry. Never raises for a
         routine refusal; raises PilotStopError when the pilot must stop."""
         now = self.clock()
+        self._fee_reconciliation_pending = False
         if self.stop_file is not None and self.stop_file.exists():
             self.armed = False
             raise PilotStopError(f"ficheiro {self.stop_file} presente: piloto desarmado")
@@ -264,7 +274,9 @@ class PaperPilot:
                 self.say("mercado fechado: nenhuma decisão")
                 return
             quotes = await self.ex.live_quotes(list(self.config.symbols))
-            self.risk.observe(self.account(quotes).equity, now)
+            await self._refresh_fees()
+            if not self._fees_pending():
+                self.risk.observe(self.account(quotes).equity, now)
             await self._exits(now)
             await self._entry(now, quotes)
         except ReadOnlyApiError as e:
@@ -302,6 +314,7 @@ class PaperPilot:
                 self.risk.consume(coid)
                 self._opened(coid, info, st)
                 await self._verify_protection(coid)
+                await self._refresh_entry_fee(coid)
             elif st.state in (OrderState.REJECTED, OrderState.CANCELLED) and st.filled_units == 0:
                 self.state.pending.pop(coid, None)
                 self.risk.release(coid)
@@ -319,13 +332,35 @@ class PaperPilot:
                 raise PilotStopError(f"alarme: {msg}")
             # ACCEPTED without fills: still working, look again next cycle
         else:  # exit
+            if (
+                st.client_order_id == coid
+                and st.filled_units > 0
+                and st.state is not OrderState.FILLED
+            ):
+                # Observed quantities are diagnostics only: partial P&L/fee allocation
+                # needs reconciliation before changing the whole-trade accounting.
+                info["filled_known"] = st.filled_units
+                info["remaining_known"] = max(
+                    0.0, abs(self.state.open[info["entry_id"]]["units"]) - st.filled_units
+                )
+                self.armed = False
+                msg = f"saída {coid} parcial: exposição e custos exigem reconciliação na TWS"
+                self.kill(msg)
+                self.journal(
+                    "partial_exit",
+                    coid=coid,
+                    filled_known=info["filled_known"],
+                    remaining_known=info["remaining_known"],
+                    fills=[f.fill_id for f in st.fills],
+                )
+                raise PilotStopError(f"alarme: {msg}")
             if st.client_order_id != coid:  # the stop/target filled while the exit was prepared
-                self.state.pending.pop(coid, None)
                 kind = "stop" if st.client_order_id.endswith(":sl") else "alvo"
-                self._closed(info["entry_id"], st, kind)
+                if await self._closed(info["entry_id"], st, kind):
+                    self.state.pending.pop(coid, None)
             elif st.state is OrderState.FILLED:
-                self.state.pending.pop(coid, None)
-                self._closed(info["entry_id"], st, info.get("reason", "saída"))
+                if await self._closed(info["entry_id"], st, info.get("reason", "saída")):
+                    self.state.pending.pop(coid, None)
             elif st.state in (OrderState.REJECTED, OrderState.CANCELLED):
                 self.state.pending.pop(coid, None)
                 self.kill(f"saída {coid} recusada pelo IBKR: posição sem proteção, rever na TWS")
@@ -375,23 +410,72 @@ class PaperPilot:
             "entry_price": entry,
             "opened_at": self.clock().isoformat(),
             "risk_acct": abs(units) * abs(entry - info["stop"]) * info["quote_to_acct"],
-            "entry_commission": sum(f.commission for f in st.fills),
+            "entry_commission": None,
+            "fees_pending": True,
         }
         self.state.open[coid] = trade
         self.journal("order_filled", coid=coid, symbol=info["symbol"], units=units, price=entry)
         self.say(f"entrada preenchida {info['symbol']} {units:+.0f} @ {entry}")
 
-    def _closed(self, entry_id: str, st: OrderStatus, reason: str) -> None:
+    def _fees_pending(self) -> bool:
+        return self._fee_reconciliation_pending or any(
+            t.get("fees_pending", "entry_fee_confirmation" not in t) or t.get("closed_pending_fees")
+            for t in self.state.open.values()
+        )
+
+    async def _refresh_entry_fee(self, entry_id: str) -> None:
+        t = self.state.open[entry_id]
+        confirmed = await self.ex.confirmed_commission(entry_id)
+        previous = t.get("entry_fee_confirmation")
+        if confirmed is None:
+            t["fees_pending"] = True
+            return
+        if previous and previous["executions"] != confirmed["executions"]:
+            t["fees_pending"] = True
+            t["fee_error"] = "execution fee correction requires reconciliation"
+            return
+        if not previous:
+            t["entry_fee_confirmation"] = confirmed
+            t["entry_commission"] = confirmed["total"]
+        t["fees_pending"] = False
+
+    async def _refresh_fees(self) -> None:
+        for eid in list(self.state.open):
+            t = self.state.open[eid]
+            pending_close = t.get("closed_pending_fees")
+            if pending_close:
+                st = await self.ex.find(pending_close["coid"])
+                if st is not None:
+                    await self._closed(eid, st, pending_close["reason"])
+            else:
+                await self._refresh_entry_fee(eid)
+
+    async def _closed(self, entry_id: str, st: OrderStatus, reason: str) -> bool:
         fill_ids = [f.fill_id for f in st.fills]
         if entry_id in self.state.closed_entries or any(
             f in self.state.seen_fills for f in fill_ids
         ):
-            return  # deduplicated: this close was already counted
-        t = self.state.open.pop(entry_id, None)
+            return True  # deduplicated: this close was already counted
+        t = self.state.open.get(entry_id)
         if t is None:
-            return
+            return True
+        if st.state is not OrderState.FILLED or abs(st.filled_units - abs(t["units"])) > 1e-6:
+            t["closed_pending_fees"] = {"coid": st.client_order_id, "reason": reason}
+            t["fee_error"] = "close quantity/status changed: reconciliation required"
+            return False
+        await self._refresh_entry_fee(entry_id)
+        exit_fee = await self.ex.confirmed_commission(st.client_order_id)
+        if t["fees_pending"] or exit_fee is None:
+            t["closed_pending_fees"] = {"coid": st.client_order_id, "reason": reason}
+            return False
+        entry_ids = set(t["entry_fee_confirmation"]["executions"])
+        if entry_ids & set(exit_fee["executions"]):
+            t["closed_pending_fees"] = {"coid": st.client_order_id, "reason": reason}
+            t["fee_error"] = "entry and exit share an execution id"
+            return False
+        self.state.open.pop(entry_id)
         exit_px = float(st.avg_price or 0.0)
-        commissions = t.get("entry_commission", 0.0) + sum(f.commission for f in st.fills)
+        commissions = t["entry_commission"] + exit_fee["total"]
         pnl = (exit_px - t["entry_price"]) * t["units"] * t["quote_to_acct"] - commissions
         net_r = pnl / t["risk_acct"] if t["risk_acct"] > 0 else 0.0
         self.state.realized += pnl
@@ -414,6 +498,7 @@ class PaperPilot:
             f"fecho {t['symbol']} ({reason}): {pnl:+.2f} {self.config.currency}, {net_r:+.2f} R"
         )
         self._retirement(model_id)
+        return True
 
     def _retirement(self, model_id: str) -> None:
         from app.fx.agents.trained import retirement_decision
@@ -442,18 +527,28 @@ class PaperPilot:
     async def _check_open(self, now: datetime) -> None:
         """Stops/targets filled at IBKR, protection still working, positions changed outside."""
         for eid in list(self.state.open):
+            if self.state.open[eid].get("closed_pending_fees"):
+                continue
             st = await self.ex.protective_fill(eid)
             if st is None:
                 continue
             if st.filled_units + 1e-9 < abs(self.state.open[eid]["units"]):
                 self.kill(f"proteção de {eid} preenchida parcialmente: rever na TWS")
                 continue
-            self._closed(eid, st, "stop" if st.client_order_id.endswith(":sl") else "alvo")
+            await self._closed(eid, st, "stop" if st.client_order_id.endswith(":sl") else "alvo")
         for eid in list(self.state.open):
+            if self.state.open[eid].get("closed_pending_fees"):
+                continue
             if f"{eid}:x" not in self.state.pending:  # an exit cancels protection on purpose
                 await self._verify_protection(eid, quiet=True)
-        broker = await self.fetch_positions()
+        try:
+            broker = await self.fetch_positions()
+        except CommissionPendingError:
+            self._fee_reconciliation_pending = True
+            return  # entries pause; broker protections and risk-reducing exits remain enabled
         for t in list(self.state.open.values()):
+            if t.get("closed_pending_fees"):
+                continue
             held = broker.get(t["symbol"], 0.0)
             age = now - datetime.fromisoformat(t["opened_at"])
             if age > timedelta(minutes=2) and abs(held - t["units"]) > 1e-6:
@@ -470,9 +565,16 @@ class PaperPilot:
 
     async def _exits(self, now: datetime) -> None:
         weekend = self._before_weekend(now)
+        risk_exit = (
+            f"bloqueio diário: {self.risk.state.lock}" if self.risk.should_flatten() else None
+        )
         for eid, t in list(self.state.open.items()):
+            if t.get("closed_pending_fees"):
+                continue
             due = datetime.fromisoformat(t["time_stop_at"])
-            reason = "fim de semana" if weekend else ("tempo" if now >= due else None)
+            reason = risk_exit or (
+                "fim de semana" if weekend else ("tempo" if now >= due else None)
+            )
             if reason is None:
                 continue
             coid = f"{eid}:x"
@@ -538,7 +640,28 @@ class PaperPilot:
             out += [{"symbol": sym, **p} for p in proposals]
         return sorted(out, key=lambda p: -float(p["row"]["score"]))
 
+    def signal_duration(self, model: LinearModel) -> timedelta:
+        return timedelta(hours=BAR_HOURS[model.timeframe])
+
+    def signal_delay(self) -> timedelta:
+        return SIGNAL_MAX_DELAY
+
+    def entry_geometry_allowed(
+        self, candidate: dict[str, Any], units: float, reference: float, quotes: dict[str, Quote]
+    ) -> bool:
+        return True
+
+    def _guard_entry_send(self) -> None:
+        if self.stop_file is not None and self.stop_file.exists():
+            self.armed = False
+            raise SendBlockedError("STOP requested: entry not sent")
+        if not self.armed:
+            raise SendBlockedError("pilot disarmed: entry not sent")
+
     async def _entry(self, now: datetime, quotes: dict[str, Quote]) -> None:
+        if self._fees_pending():
+            self.say("commission confirmation pending: new entries paused")
+            return
         if not self.state.active_ids:
             self.say("NO TRADE: nenhum candidato elegível no registo de treino")
             return
@@ -559,8 +682,8 @@ class PaperPilot:
             if sym in managed or abs(broker.get(sym, 0.0)) > 1e-9:
                 self.journal("skip", symbol=sym, reason="par com posição (do piloto ou externa)")
                 continue
-            bar_close = c["bar_open"].to_pydatetime() + timedelta(hours=BAR_HOURS[m.timeframe])
-            if now - bar_close > SIGNAL_MAX_DELAY:
+            bar_close = c["bar_open"].to_pydatetime() + self.signal_duration(m)
+            if now - bar_close > self.signal_delay():
                 self.journal("skip", symbol=sym, reason="sinal antigo: vela fechou há demasiado")
                 continue
             q = quotes.get(sym)
@@ -595,6 +718,9 @@ class PaperPilot:
                 )
                 self.say(f"{sym} recusado: {', '.join(r.code for r in decision.refusals)}")
                 continue
+            if not self.entry_geometry_allowed(c, decision.units, ref, quotes):
+                self.journal("skip", symbol=sym, reason="fee/risk geometry veto")
+                continue
             p = pair(sym)
             info = {
                 "kind": "entry",
@@ -608,7 +734,7 @@ class PaperPilot:
                 "quote_to_acct": Converter(quotes).rate(p.quote, self.config.currency),
                 "time_stop_at": (
                     c["bar_open"].to_pydatetime()
-                    + timedelta(hours=BAR_HOURS[m.timeframe] * (1 + int(row["max_hold"])))
+                    + self.signal_duration(m) * (1 + int(row["max_hold"]))
                 ).isoformat(),
             }
             if not self.armed:
@@ -623,7 +749,7 @@ class PaperPilot:
             self.journal("order_sent", coid=coid, units=decision.units, **info)
             self.save()  # write-ahead: a crash after this line is reconciled, never resent
             try:
-                st = await self.ex.place_bracket(req)
+                st = await self.ex.place_bracket(req, guard=self._guard_entry_send)
             except ReadOnlyApiError:
                 self.state.pending.pop(coid, None)
                 self.risk.release(coid)
@@ -648,8 +774,19 @@ class PaperPilot:
             "armed": self.armed,
             "active_ids": s.active_ids,
             "retired_ids": s.retired_ids,
-            "open": s.open,
+            "open": {eid: t for eid, t in s.open.items() if not t.get("closed_pending_fees")},
+            "accounting_pending": {
+                eid: t for eid, t in s.open.items() if t.get("closed_pending_fees")
+            },
             "pending": list(s.pending),
+            "fees_pending": [
+                eid
+                for eid, t in s.open.items()
+                if t.get("fees_pending", "entry_fee_confirmation" not in t)
+                or t.get("closed_pending_fees")
+            ],
+            "cash_fee_confirmation_pending": self._fee_reconciliation_pending,
+            "accounting_provisional": self._fees_pending(),
             "realized": round(s.realized, 2),
             "closed_trades": {k: len(v) for k, v in s.returns.items()},
             "risk": self.risk.status(),

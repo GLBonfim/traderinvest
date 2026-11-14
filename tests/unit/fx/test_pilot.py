@@ -477,3 +477,286 @@ def test_replacement_is_a_free_candidate_not_one_already_active(tmp_path: Path) 
     cycle(p)
     assert p.state.retired_ids == ["ridge-H1-a"]
     assert p.state.active_ids == ["ridge-H1-c", "ridge-H1-b"]  # the reserve takes the slot
+
+
+def test_stop_arriving_during_entry_lookup_blocks_every_bracket_leg(tmp_path: Path) -> None:
+    p, ib, _, _ = make(tmp_path, armed=True)
+
+    def stop_during_entry_qualification() -> None:
+        if p.state.pending:
+            (tmp_path / "STOP").write_text("stop requested", encoding="utf-8")
+
+    ib.on_qualify = stop_during_entry_qualification
+    cycle(p)
+    assert ib.placed == []
+    assert not p.armed
+    assert p.state.open == {} and p.state.pending == {}
+    assert p.risk.state.reservations == {}
+    assert "pilot_order_rejected" in kinds(p)
+
+
+@pytest.mark.parametrize(
+    ("realized", "flatten_loss", "flatten_profit", "closed"),
+    [
+        (-600.0, True, False, True),
+        (-600.0, False, False, False),
+        (1600.0, True, True, True),
+        (1600.0, True, False, False),
+    ],
+)
+def test_daily_lock_respects_position_flatten_policy(
+    tmp_path: Path, realized: float, flatten_loss: bool, flatten_profit: bool, closed: bool
+) -> None:
+    from dataclasses import replace
+
+    p, ib, _, clock = make(tmp_path, armed=True)
+    cycle(p)
+    (eid,) = p.state.open
+    p.risk.config = replace(
+        p.risk.config,
+        flatten_on_daily_loss=flatten_loss,
+        flatten_on_profit_target=flatten_profit,
+    )
+    p.state.realized = realized
+    clock.now += timedelta(seconds=30)
+    ib.tickers["EURUSD"].time = clock.now
+    cycle(p)
+    assert p.risk.state.lock is not None
+    assert (eid in p.state.closed_entries) is closed
+    assert (ib.positions["EURUSD"] == 0) is closed
+    assert len(ib.placed) == (4 if closed else 3)
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_partial_close_preserves_pending_and_stops_for_reconciliation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancelled: bool
+) -> None:
+    p, ib, _, clock = make(tmp_path, armed=True)
+    cycle(p)
+    (eid,) = p.state.open
+    original_units = p.state.open[eid]["units"]
+    realized = p.state.realized
+    ib.partial = 5000
+    if cancelled:
+        original_fill = ib._fill
+
+        def cancel_after_partial_fill(trade: Any, price: float, qty: float | None = None) -> None:
+            original_fill(trade, price, qty)
+            trade.orderStatus.status = "Cancelled"
+
+        monkeypatch.setattr(ib, "_fill", cancel_after_partial_fill)
+    clock.now += timedelta(hours=10)
+    ib.tickers["EURUSD"].time = clock.now
+    with pytest.raises(PilotStopError, match="parcial"):
+        cycle(p)
+    assert not p.armed and p.risk.state.kill_switch
+    assert p.state.pending[f"{eid}:x"]["filled_known"] == 5000
+    assert p.state.pending[f"{eid}:x"]["remaining_known"] == original_units - 5000
+    assert p.state.open[eid]["units"] == original_units
+    assert p.state.realized == realized
+    assert ib.positions["EURUSD"] == original_units - 5000
+    assert len(ib.placed) == 4
+    saved = p.store.get_state("pilot")
+    assert saved["pending"][f"{eid}:x"]["filled_known"] == 5000
+    with pytest.raises(PilotStopError, match="parcial"):
+        cycle(p)
+    assert len(ib.placed) == 4  # reconciliation never resends the uncertain close
+
+
+def test_confirmed_open_entry_fee_reduces_equity_without_realized_debit(tmp_path: Path) -> None:
+    p, _, _, _ = make(tmp_path, armed=True)
+    cycle(p)
+    quotes = asyncio.run(p.ex.live_quotes(["EURUSD"]))
+    account = p.account(quotes)
+    assert account.equity == pytest.approx(10_000 - 32000 * 0.00006 / 1.10003 - 2 / 1.10003)
+    assert p.state.realized == 0
+
+
+def test_delayed_entry_fee_is_explicit_and_refreshed(tmp_path: Path) -> None:
+    p, ib, _, _ = make(tmp_path, armed=True)
+    original_fill = ib._fill
+
+    def missing_report(trade: Any, price: float, qty: float | None = None) -> None:
+        original_fill(trade, price, qty)
+        trade.fills[-1].commissionReport.commission = 1e308
+        trade.fills[-1].commissionReport.currency = ""
+
+    ib._fill = missing_report
+    cycle(p)
+    (eid,) = p.state.open
+    assert p.state.open[eid]["entry_commission"] is None
+    assert eid in p.status()["fees_pending"]
+    assert p.armed and not p.risk.state.kill_switch
+    report = ib.by_ref(eid).fills[0].commissionReport
+    report.commission, report.currency = 2.0, "USD"
+    cycle(p)
+    assert p.state.open[eid]["entry_commission"] == pytest.approx(2 / 1.10003)
+    assert p.status()["fees_pending"] == []
+    assert p.state.realized == 0 and len(ib.placed) == 3
+
+
+def test_delayed_exit_fee_defers_final_accounting_without_phantom_exposure(tmp_path: Path) -> None:
+    p, ib, _, _ = make(tmp_path, armed=True)
+    cycle(p)
+    (eid,) = p.state.open
+    ib.hit(f"{eid}:sl")
+    report = ib.by_ref(f"{eid}:sl").fills[0].commissionReport
+    report.commission, report.currency = 1e308, ""
+    cycle(p)
+    assert eid in p.state.open
+    assert p.state.open[eid]["closed_pending_fees"]
+    assert p._positions() == {}
+    assert p.status()["open"] == {}
+    assert eid in p.status()["accounting_pending"]
+    assert p.state.realized == 0 and p.state.returns == {}
+    assert eid in p.status()["fees_pending"]
+    cycle(p)  # no protection alarm or second close while economically unsettled
+    assert len(ib.placed) == 3
+    report.commission, report.currency = 2.0, "USD"
+    cycle(p)
+    assert eid in p.state.closed_entries and eid not in p.state.open
+    realized = p.state.realized
+    assert realized < 0 and len(p.state.returns["ridge-H1-a"]) == 1
+    cycle(p)
+    assert p.state.realized == realized and len(ib.placed) == 3
+
+
+def test_pending_cash_fee_keeps_risk_reducing_exit_available(tmp_path: Path) -> None:
+    from app.fx.ibkr.cash_reconciliation import CommissionPendingError
+
+    p, ib, _, clock = make(tmp_path, armed=True)
+    cycle(p)
+    (eid,) = p.state.open
+
+    async def cash_fee_pending() -> dict[str, float]:
+        raise CommissionPendingError()
+
+    p.fetch_positions = cash_fee_pending
+    clock.now += timedelta(hours=10)
+    ib.tickers["EURUSD"].time = clock.now
+    cycle(p)
+    assert eid in p.state.closed_entries
+    assert ib.positions["EURUSD"] == 0 and len(ib.placed) == 4
+    assert p.status()["cash_fee_confirmation_pending"]
+
+
+def test_changed_confirmed_entry_fee_blocks_finalization_until_review(tmp_path: Path) -> None:
+    p, ib, _, _ = make(tmp_path, armed=True)
+    cycle(p)
+    (eid,) = p.state.open
+    previous = p.state.open[eid]["entry_commission"]
+    ib.by_ref(eid).fills[0].commissionReport.commission = 3.0
+    ib.hit(f"{eid}:sl")
+    cycle(p)
+    assert p.state.realized == 0 and p.state.returns == {}
+    assert p.state.open[eid]["entry_commission"] == previous
+    assert "correction" in p.state.open[eid]["fee_error"]
+    assert p.state.open[eid]["closed_pending_fees"]
+
+
+def test_fee_pending_close_survives_restart_and_finalizes_once(tmp_path: Path) -> None:
+    p, ib, _, clock = make(tmp_path, armed=True)
+    cycle(p)
+    (eid,) = p.state.open
+    ib.hit(f"{eid}:tp")
+    report = ib.by_ref(f"{eid}:tp").fills[0].commissionReport
+    report.commission, report.currency = 1e308, ""
+    cycle(p)
+    p.store.close()
+    restarted, _, _, _ = make(tmp_path, ib=ib, clock=clock)
+    assert restarted._positions() == {} and restarted.status()["accounting_provisional"]
+    report.commission, report.currency = 2.0, "USD"
+    cycle(restarted)
+    assert eid in restarted.state.closed_entries and restarted.state.open == {}
+    realized = restarted.state.realized
+    cycle(restarted)
+    assert restarted.state.realized == realized
+    assert len(restarted.state.returns["ridge-H1-a"]) == 1
+
+
+def test_pending_entry_fee_blocks_other_pair_until_confirmed(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    p, ib, _, _ = make(tmp_path, armed=True)
+    p.risk.config = replace(p.risk.config, risk_per_trade_pct=0.1)
+    original_fill = ib._fill
+
+    def missing_report(trade: Any, price: float, qty: float | None = None) -> None:
+        original_fill(trade, price, qty)
+        trade.fills[-1].commissionReport.currency = ""
+
+    ib._fill = missing_report
+    cycle(p)
+    (eid,) = p.state.open
+    p.config = replace(p.config, symbols=("EURUSD", "GBPUSD"))
+    ib.tickers["GBPUSD"] = ticker("GBPUSD", 1.2700, 1.27006)
+    cycle(p)
+    assert len(ib.placed) == 3
+    assert p.status()["accounting_provisional"]
+    ib.by_ref(eid).fills[0].commissionReport.currency = "USD"
+    cycle(p)
+    assert len(ib.placed) == 6 and "GBPUSD" in ib.positions
+
+
+def test_unconfirmed_entry_fee_does_not_block_due_market_exit(tmp_path: Path) -> None:
+    p, ib, _, clock = make(tmp_path, armed=True)
+    original_fill = ib._fill
+
+    def missing_report(trade: Any, price: float, qty: float | None = None) -> None:
+        original_fill(trade, price, qty)
+        trade.fills[-1].commissionReport.currency = ""
+
+    ib._fill = missing_report
+    cycle(p)
+    (eid,) = p.state.open
+    clock.now += timedelta(hours=10)
+    ib.tickers["EURUSD"].time = clock.now
+    cycle(p)
+    assert ib.positions["EURUSD"] == 0 and len(ib.placed) == 4
+    assert p.state.open[eid]["closed_pending_fees"]
+    assert p.state.realized == 0
+
+
+def test_pending_fee_close_changed_quantity_cannot_finalize_full_trade(tmp_path: Path) -> None:
+    p, ib, _, _ = make(tmp_path, armed=True)
+    cycle(p)
+    (eid,) = p.state.open
+    ib.hit(f"{eid}:sl")
+    trade = ib.by_ref(f"{eid}:sl")
+    report = trade.fills[0].commissionReport
+    report.currency = ""
+    cycle(p)
+    report.currency = "USD"
+    trade.orderStatus.filled -= 1000
+    trade.fills[0].execution.shares -= 1000
+    cycle(p)
+    assert eid in p.state.open and p.state.realized == 0
+    assert "quantity" in p.state.open[eid]["fee_error"]
+
+
+def test_actual_cash_guard_sentinel_keeps_due_exit_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.fx.test_cash_reconciliation import fill, setup
+
+    p, ib, _, clock = make(tmp_path, armed=True)
+    cycle(p)
+    (eid,) = p.state.open
+    cash_root = tmp_path / "cash-fixture"
+    cash_root.mkdir()
+    guard, cash_ib, cash_store = setup(cash_root)
+    cash_ib.fills = [fill(fee=1e308)]
+    before = cash_store.get_state("cash_reconciliation")
+
+    async def no_delay(_: float) -> None:
+        pass
+
+    monkeypatch.setattr("app.fx.ibkr.cash_reconciliation.asyncio.sleep", no_delay)
+    p.fetch_positions = guard
+    clock.now += timedelta(hours=10)
+    ib.tickers["EURUSD"].time = clock.now
+    cycle(p)
+    assert eid in p.state.closed_entries
+    assert ib.positions["EURUSD"] == 0 and len(ib.placed) == 4
+    assert p.status()["cash_fee_confirmation_pending"]
+    assert cash_store.get_state("cash_reconciliation") == before

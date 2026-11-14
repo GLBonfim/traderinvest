@@ -210,25 +210,40 @@ def build_returns(
     return buf.getvalue(), infos
 
 
+_WINDOWS = os.name == "nt"
+
+
 def write_new_atomic(path: Path, text: str) -> None:
     """Publishes `path` atomically and never over an existing file.
 
     The content is written, flushed and fsynced to `<name>.tmp` (created exclusively: an
     existing temporary file is not ours and is never touched), then hard-linked to `path`
-    (fails if `path` exists: an existing artifact is never replaced), then the temporary name
-    is removed. Any failure before publication removes the temporary file when possible; if
+    (fails if `path` exists: an existing artifact is never replaced). On Windows only,
+    denied hard links (WinError5) use native rename, which also rejects an existing
+    destination atomically. A successful rename consumes the source; a hard link requires
+    removing our temporary name afterward. Any failure before publication removes
+    the temporary file when possible; if
     that cleanup fails too, the residue is reported as a note on the ORIGINAL exception. A
     failure to remove the temporary name after publication raises (fail-closed). The
     directory is not fsynced: durability of the new name after a power loss is not guaranteed.
     """
     tmp = path.with_name(path.name + ".tmp")
     fh = open(tmp, "x", encoding="utf-8", newline="\n")  # noqa: SIM115 - closed below
+    moved = False
     try:
         with fh:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
-        os.link(tmp, path)
+        try:
+            os.link(tmp, path)
+        except PermissionError as error:
+            if not _WINDOWS or getattr(error, "winerror", None) != 5:
+                raise
+            # Windows rename never replaces an existing destination (unlike POSIX).
+            # No exists()+replace race and no copying into a visible partial file.
+            os.rename(tmp, path)
+            moved = True
     except BaseException as exc:
         try:
             os.remove(tmp)
@@ -237,6 +252,8 @@ def write_new_atomic(path: Path, text: str) -> None:
                 f"temporary file left behind: {tmp.name} ({type(cleanup).__name__}: {cleanup})"
             )
         raise
+    if moved:
+        return  # source is consumed; a newly created .tmp belongs to another writer
     try:
         os.remove(tmp)
     except OSError as cleanup:

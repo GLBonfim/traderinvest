@@ -4,7 +4,7 @@ import hashlib
 import json
 import math
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 from app.fx.risk import Check, RiskDecision, RiskManager
 
@@ -35,7 +35,7 @@ def load_settings(store: Any) -> dict[str, Any]:
     last = store.recent(1, ("paper_budget_applied",))
     if not last or last[0]["payload"].get("sha256") != digest(saved):
         raise ValueError("Configuração da banca difere do diário; rever antes de operar.")
-    return saved
+    return cast(dict[str, Any], saved)
 
 
 class BudgetRiskManager(RiskManager):

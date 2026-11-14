@@ -431,6 +431,13 @@ def test_cleanup_failure_after_publication_fails_closed(
             raise PermissionError("locked")
         real_remove(path)
 
+    # Exercise the two-name hard-link backend explicitly on hosts where Windows
+    # uses rename publication (which consumes the temporary and needs no unlink).
+    def publish_two_names(src: Any, dst: Any) -> None:
+        with open(dst, "xb") as stream:
+            stream.write(Path(src).read_bytes())
+
+    monkeypatch.setattr(os, "link", publish_two_names)
     monkeypatch.setattr(os, "remove", no_remove)
     rc, out = run_grid(tmp_path)
     monkeypatch.undo()

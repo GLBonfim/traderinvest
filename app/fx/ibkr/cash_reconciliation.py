@@ -147,8 +147,13 @@ class CashReconciler:
                 or qty <= 0
                 or price <= 0
                 or fee < 0
-                or fee > 100
             ):
+                raise ExecutionError("execution or commission not confirmed", ambiguous=True)
+            # IBKR's UNSET_DOUBLE is the largest finite float. Treat its huge
+            # sentinel range as unknown, while infinity and genuine bad fees fail closed.
+            if fee >= 1e308:
+                raise CommissionPendingError()
+            if fee > 100:
                 raise ExecutionError("execution or commission not confirmed", ambiguous=True)
             item = {
                 "id": fid,
@@ -217,6 +222,8 @@ class CashReconciler:
                 return {s: u for s, u in self.state["positions"].items() if abs(u) > 1e-8}
             if attempt < 3:
                 await asyncio.sleep(1)
+        if not ready:
+            raise CommissionPendingError()
         raise ExecutionError("cash does not match confirmed executions: paused", ambiguous=True)
 
     def status(self) -> dict[str, Any]:

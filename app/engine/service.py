@@ -85,6 +85,7 @@ class EngineService:
         self.clients: set[_Client] = set()
         self.stopping = asyncio.Event()
         self.bound_port: int | None = None
+        self._owns_metadata = False
         self._last_client_at = time.monotonic()
         self.store: FxStore | None = None
 
@@ -118,6 +119,7 @@ class EngineService:
                 ),
                 encoding="utf-8",
             )
+            self._owns_metadata = True
             self._last_client_at = time.monotonic()
             print(f"ENGINE_READY port={self.bound_port}", flush=True)
             log.info("engine ready on %s:%s", self.host, self.bound_port)
@@ -143,8 +145,10 @@ class EngineService:
                 self.store.append("engine_stopped", {"reason": "shutdown"}, self.orch.market.now)
             if self.store is not None:  # a refused start saves nothing over the existing data
                 self.store.close()
-            with contextlib.suppress(OSError):
-                (self.root / "engine.json").unlink()
+            if self._owns_metadata:
+                with contextlib.suppress(OSError):
+                    (self.root / "engine.json").unlink()
+                self._owns_metadata = False
         finally:
             self.lock.release()
         log.info("engine stopped")

@@ -1,5 +1,6 @@
 """System-level historical replay: the REAL orchestrator, coordinator, risk manager and
-simulated venue on IBKR bid/ask M15 history (SIMULATION environment, HISTORICAL data).
+simulated venue on bid/ask M5/M15/H1 history (SIMULATION, HISTORICAL data).
+M5 is an isolated research path; no registry promotion or broker integration is performed.
 
 - every bar is replayed as four quote ticks in the usual OHLC path (open, low then high for a
   rising bar / high then low for a falling one, close), so venue-held stops and targets trigger
@@ -7,14 +8,17 @@ simulated venue on IBKR bid/ask M15 history (SIMULATION environment, HISTORICAL 
 - agents are the v2 signal functions evaluated once over the whole history (causal) and looked
   up bar by bar (`PrecomputedAgent`): same code as production, without recomputing indicators
   24,000 times; production agents use a 600-bar window (negligible EMA seeding difference);
-- the venue commission is set to an IBKR-like 40 per million (the per-order minimum dominates
-  for a 10 000 EUR account); overnight financing is not modelled by the simulated venue.
+- legacy replay commission remains 40 per million; explicit overrides may add a USD
+  per-order minimum. Overnight financing is not modelled by the simulated venue;
+- entries fill at the signal close and the four-tick OHLC path is assumed, not observed.
+  Replay results cannot establish paper/live qualification or exact M5 research parity.
 
 Everything the product does is exercised: one entry per cycle, conflicts, regime vetoes, risk
 sizing in EUR, leverage/margin/exposure checks, 5 entries per FX day, -5 % / +15 % daily locks,
 weekend flattening, rollover window, spread limit.
 """
 
+import math
 import tempfile
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
@@ -25,15 +29,18 @@ from typing import Any, overload
 import numpy as np
 import pandas as pd
 
+from app.fx.accounting import Converter
 from app.fx.agents.base import Agent, MarketView, from_signal, hold, make
 from app.fx.agents.coordinator import PortfolioCoordinator
 from app.fx.calendar import FxCalendar
 from app.fx.config import FxConfig, SimulationSettings
-from app.fx.models import Bar, DataOrigin, Direction, Quote
+from app.fx.environment import Environment
+from app.fx.models import Bar, DataOrigin, Direction, Quote, Side
 from app.fx.orchestrator import Orchestrator
+from app.fx.orders import ExecutionError, Fill, OrderRequest
 from app.fx.ports import Capabilities
 from app.fx.proposals import AgentProposal, AgentRole, ProposalAction
-from app.fx.sim.broker import SimBroker
+from app.fx.sim.broker import SimBroker, SimBrokerConfig
 from app.fx.sim.market import SyntheticMarket
 from app.fx.store import FxStore
 
@@ -179,6 +186,60 @@ class HistoricalMarket(SyntheticMarket):
 
 
 class ReplayBroker(SimBroker):
+    def __init__(
+        self,
+        config: SimBrokerConfig,
+        max_order_units: float | None = None,
+        commission_min_usd: float = 0.0,
+    ) -> None:
+        super().__init__(config)
+        self.max_order_units = max_order_units
+        self.commission_min_usd = commission_min_usd
+
+    def _check_margin(self, request: OrderRequest, units: float) -> None:
+        if (
+            not request.reduce_only
+            and self.max_order_units is not None
+            and units > self.max_order_units
+        ):
+            raise ExecutionError("replay max_order_units exceeded", ambiguous=False)
+        super()._check_margin(request, units)
+
+    def _execute(
+        self,
+        coid: str,
+        sym: str,
+        side: Side,
+        units: float,
+        reason: str,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
+    ) -> Fill:
+        if self.commission_min_usd == 0:
+            return super()._execute(coid, sym, side, units, reason, stop_loss, take_profit)
+        conv = Converter(self.quotes)
+        try:
+            minimum = self.commission_min_usd * conv.rate("USD", self.config.currency)
+            notional = self.book.notional(sym, units, conv)
+        except LookupError as exc:
+            raise ExecutionError(
+                "replay commission USD conversion unavailable", ambiguous=False
+            ) from exc
+        original = self.config
+        # Synchronous execution: apply the minimum through the existing single
+        # commission debit/fill path, including stops and risk-reducing closes.
+        self.config = replace(
+            original,
+            commission_per_million=max(
+                original.commission_per_million,
+                minimum / notional * 1_000_000,
+            ),
+        )
+        try:
+            return super()._execute(coid, sym, side, units, reason, stop_loss, take_profit)
+        finally:
+            self.config = original
+
     @property
     def capabilities(self) -> Capabilities:
         return replace(
@@ -241,9 +302,18 @@ def run_replay(
     approved: frozenset[str],
     work_dir: Path | None = None,
     timeframe: str = "M15",
+    *,
+    config_override: FxConfig | None = None,
+    max_order_units: float | None = None,
+    commission_min_usd: float = 0.0,
 ) -> dict[str, Any]:
-    work = work_dir or Path(tempfile.mkdtemp())
-    bar_minutes = {"M15": 15, "H1": 60}[timeframe]
+    if timeframe not in ("M5", "M15", "H1"):
+        raise ValueError("unsupported replay timeframe")
+    if max_order_units is not None and (not math.isfinite(max_order_units) or max_order_units <= 0):
+        raise ValueError("replay max_order_units must be finite and positive")
+    if not math.isfinite(commission_min_usd) or commission_min_usd < 0:
+        raise ValueError("replay commission minimum must be finite and nonnegative")
+    bar_minutes = {"M5": 5, "M15": 15, "H1": 60}[timeframe]
     cfg = FxConfig(
         pairs=list(data),
         timeframe=timeframe,
@@ -251,6 +321,15 @@ def run_replay(
             commission_per_million=40.0, slippage_pips=0.0, warm_up_minutes=0
         ),
     )
+    if config_override is not None:
+        cfg = FxConfig.model_validate(config_override.model_dump())
+        if cfg.environment is not Environment.SIMULATION:
+            raise ValueError("historical replay requires SIMULATION")
+        if cfg.timeframe != timeframe or set(cfg.pairs) != set(data):
+            raise ValueError("replay configuration timeframe/pairs mismatch")
+    work = work_dir or Path(tempfile.mkdtemp())
+    if (work / "replay.db").exists():
+        raise ValueError("existing replay journal: choose an isolated directory")
     agents: list[Agent] = [
         PrecomputedAgent(role, signals[role], feats, max_holds[role]) for role in signals
     ]
@@ -258,7 +337,7 @@ def run_replay(
         cfg,
         FxStore(work / "replay.db"),
         start,
-        broker_factory=lambda c: ReplayBroker(replace(c, commission_per_million=40.0)),
+        broker_factory=lambda c: ReplayBroker(c, max_order_units, commission_min_usd),
         market_factory=lambda c, now, cal: HistoricalMarket(
             data, start, end, cal, timeframe, bar_minutes
         ),
@@ -287,7 +366,38 @@ def run_replay(
     per_day = pd.Series(
         [o.calendar.trading_day(datetime.fromisoformat(i.created_at)).isoformat() for i in entries]
     ).value_counts()
-    return {
+    fills_by_id = {
+        f.fill_id: f.to_dict() for status in o.broker.orders.values() for f in status.fills
+    }
+    for event in o.store.recent(10**7, ("position_closed",)):
+        fill = event["payload"]["fill"]
+        fills_by_id[fill["fill_id"]] = fill
+    pd.DataFrame(list(fills_by_id.values())).to_csv(work / "fills.csv", index=False)
+    closed.to_csv(work / "closed_positions.csv", index=False)
+    eq.rename("equity").to_csv(work / "equity_daily.csv", index_label="trading_day")
+    result = {
+        "research_only": True,
+        "qualified_for_paper": False,
+        "statistically_approved": False,
+        "execution_enabled": False,
+        "timeframe": timeframe,
+        "effective_config": cfg.model_dump(mode="json"),
+        "max_order_units": max_order_units,
+        "commission_min_usd": commission_min_usd,
+        "limitations": [
+            "assumed_intrabar_ohlc_path",
+            "entry_at_signal_close_not_next_open",
+            "financing_not_modelled",
+            "no_broker_execution_or_reconciliation",
+        ],
+        "closed_positions_pnl": "gross_before_commissions",
+        "largest_entry_units": max((i.filled_units for i in entries), default=0.0),
+        "artifacts": {
+            "journal": str(work / "replay.db"),
+            "closed_positions": str(work / "closed_positions.csv"),
+            "equity_daily": str(work / "equity_daily.csv"),
+            "fills": str(work / "fills.csv"),
+        },
         "start": start.isoformat(),
         "end": end.isoformat(),
         "approved": sorted(approved),
@@ -308,3 +418,5 @@ def run_replay(
         "journal_chain_ok": o.store.verify()[0],
         "equity_daily": {k: round(float(v), 2) for k, v in eq.items()},
     }
+    o.store.close()
+    return result

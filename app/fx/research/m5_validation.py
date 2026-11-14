@@ -53,6 +53,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 from app.candles.engine import CandlestickEngine
 from app.fx.agents.trained import (
@@ -67,6 +68,7 @@ from app.fx.agents.trained import (
 from app.fx.models import pair
 from app.fx.research.backtest import EUR_TO, USD_TO, _ns, _trading_day_ordinal, summarize
 from app.fx.research.history import with_spread_floor
+from app.fx.research.holdout_guard import claim_holdout, prepare_holdout
 
 SCHEMA = "fx-m5-pipeline-validation/1"
 TIMEFRAME = "M5"
@@ -218,7 +220,7 @@ def check_manifest(root: Path, pairs: tuple[str, ...] = PROTOCOL.pairs) -> dict[
             raise FileNotFoundError(f"manifest chunk missing on disk: {f}")
         if hashlib.sha256(f.read_bytes()).hexdigest() != chunk["sha256"]:
             raise ValueError(f"SHA-256 mismatch for {f}")
-        if len(pd.read_parquet(f)) != int(chunk["rows"]):
+        if pq.read_metadata(f).num_rows != int(chunk["rows"]):
             raise ValueError(f"row count mismatch for {f}")
         listed.add(f.resolve())
     for symbol in pairs:
@@ -242,7 +244,23 @@ def load_m5(root: Path, symbol: str, before: pd.Timestamp | None = None) -> pd.D
             raise FileNotFoundError(f"no {side} M5 data for {symbol} under {root}")
         from app.fx.research.m5_history import validate
 
-        df = pd.concat([validate(pd.read_parquet(f)) for f in files], ignore_index=True)
+        # Push the time boundary into the Parquet reader before price rows are
+        # materialized. Predicate pruning also skips wholly later row groups.
+        filters = None if before is None else [("ts", "<", before.to_pydatetime())]
+        parts = [pd.read_parquet(f, engine="pyarrow", filters=filters) for f in files]
+        parts = [part for part in parts if not part.empty]
+        # A cutoff can leave fewer than five rows of a valid chunk, for which
+        # the native-cadence ratio is undefined/too small. Check every retained
+        # fragment's OHLC before deduplication; cadence is checked after joining.
+        for part in parts:
+            values = part[["open", "high", "low", "close"]]
+            if not np.isfinite(values.to_numpy(float)).all() or not (values > 0).all().all():
+                raise ValueError("invalid price")
+            if not ((part.high >= values.max(axis=1)) & (part.low <= values.min(axis=1))).all():
+                raise ValueError("inconsistent OHLC")
+        if not parts:
+            raise ValueError(f"no {side} M5 data before {before} for {symbol}")
+        df = pd.concat(parts, ignore_index=True)
         df = validate(df)  # native M5 alignment, finite OHLC, overlaps deduplicated
         df = df.set_index("ts").sort_index()
         if before is not None:
@@ -357,6 +375,12 @@ def pipeline_signals(
         & (spread <= protocol.max_spread_pips)
         & (agree if protocol.require_model_agreement else True)
     )
+    if getattr(protocol, "lesson_filter_version", None):
+        from app.candles.lesson_m5 import allowed as lesson_allowed
+
+        if "aula02_allowed" not in patterns:
+            patterns["aula02_allowed"] = lesson_allowed(mid_of(df)).to_numpy(bool)
+        ok &= patterns["aula02_allowed"].to_numpy(bool)
     if protocol.sell_only:
         ok &= direction == -1
     atr = a["atr"].to_numpy(float)
@@ -425,7 +449,8 @@ def fit_model(
     scale = np.where(scale > 1e-8, scale, 1.0)
     z = (x - center) / scale
     threshold = protocol.thresholds[algorithm]
-    model_id = f"m5-{role}-{algorithm}-{variant:g}-{tag}"
+    prefix = "m5-aula02" if getattr(protocol, "lesson_filter_version", None) else "m5"
+    model_id = f"{prefix}-{role}-{algorithm}-{variant:g}-{tag}"
     common: dict[str, Any] = {
         "stop_atr": protocol.stop_atr,
         "target_atr": protocol.target_rr * protocol.stop_atr,  # record only: see fee_floor
@@ -532,8 +557,11 @@ def _exit(
     slip: float,
     bound: int | None = None,
 ) -> tuple[int, float, str]:
-    """First exit from bar `e` on: stop before target in the same bar (conservative), gaps
-    at the open, a hole in the data, the time stop at the close of `deadline`, or a forced
+    """First exit from bar `e` on: opening stop/target gaps precede intrabar
+    extremes; otherwise stop wins an ambiguous intrabar tie. On the entry bar,
+    the opposite-side opening price cannot cross a correctly placed positive
+    target, but opening checks use the same chronology. Also handles a hole in
+    the data, the time stop at the close of `deadline`, or a forced
     close at the last bar of the evaluation window (`bound`): no exit uses later data."""
     side = "bid" if d > 0 else "ask"  # a long closes on the bid, a short on the ask
     o, hi, lo, cl = a.o[side], a.h[side], a.lo[side], a.c[side]
@@ -541,21 +569,21 @@ def _exit(
     end = min(deadline, last)
     for k in range(e, end + 1):
         if d > 0:
-            if k > e and o[k] <= stop:
+            if o[k] <= stop:
                 return k, float(o[k]) - slip, "stop_gap"
+            if o[k] >= target:
+                return k, float(o[k]) - slip, "target_gap"
             if lo[k] <= stop:
                 return k, stop - slip, "stop"
-            if k > e and o[k] >= target:
-                return k, float(o[k]) - slip, "target_gap"
             if hi[k] >= target:
                 return k, target - slip, "target"
         else:
-            if k > e and o[k] >= stop:
+            if o[k] >= stop:
                 return k, float(o[k]) + slip, "stop_gap"
+            if o[k] <= target:
+                return k, float(o[k]) + slip, "target_gap"
             if hi[k] >= stop:
                 return k, stop + slip, "stop"
-            if k > e and o[k] <= target:
-                return k, float(o[k]) + slip, "target_gap"
             if lo[k] <= target:
                 return k, target + slip, "target"
         if a.gap_after[k] and k < end:
@@ -770,6 +798,15 @@ def run(
     out.mkdir(parents=True, exist_ok=True)
     if (out / "holdout.json").exists():
         raise SystemExit("holdout already evaluated for this run: refusing to repeat it")
+    # The real loader must preserve the already reserved default holdout even
+    # on its first run, before any per-dataset boundary marker exists. Synthetic
+    # injected loaders may use tiny historical boundaries for isolated tests.
+    if loader is load_m5 and pd.Timestamp(protocol.holdout_start) > pd.Timestamp(
+        PROTOCOL.holdout_start
+    ):
+        raise ValueError("M5 holdout boundary exceeds the reserved default cutoff")
+    # A consumed dataset or a changed boundary must fail before ANY loader.
+    prepare_holdout(data, protocol.holdout_start)
     # 1. protocol frozen BEFORE any market data is read
     protocol_sha = write_json(out / "protocol.json", protocol.to_dict())
     say(f"protocolo {protocol_sha[:12]} gravado")
@@ -845,6 +882,15 @@ def run(
     final_models: list[LinearModel] = []
     chosen = {r: c for r, c in selection.items() if c is not None}
     if chosen:
+        claim = claim_holdout(
+            data,
+            out,
+            protocol_sha=protocol_sha,
+            selection_sha=selection_sha,
+            holdout_start=protocol.holdout_start,
+            pairs=protocol.pairs,
+        )
+        holdout["consumption_claim"] = str(claim)
         full = {s: loader(data, s, None) for s in protocol.pairs}
         f_full, p_full = _prepare(full)
         end = max(pd.DatetimeIndex(df.index).max() for df in full.values()) + BAR

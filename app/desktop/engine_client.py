@@ -134,9 +134,11 @@ class EngineSupervisor(QObject):
         self.restarts = 0
         self.busy_retries = 0
         self.last_error = ""
+        self._stdout_buf = bytearray()
 
     def start(self) -> None:
         self.stopping = False
+        self._stdout_buf.clear()
         self.token = secrets.token_urlsafe(32)
         env = QProcessEnvironment.systemEnvironment()
         env.insert(TOKEN_ENV, self.token)
@@ -148,9 +150,13 @@ class EngineSupervisor(QObject):
         self.proc.start(program, args)
 
     def _on_stdout(self) -> None:
-        text = bytes(self.proc.readAllStandardOutput().data()).decode("utf-8", "replace")
-        for line in text.splitlines():
-            line = line.strip()
+        self._stdout_buf.extend(bytes(self.proc.readAllStandardOutput().data()))
+        while True:
+            newline = self._stdout_buf.find(b"\n")
+            if newline < 0:
+                break
+            line = bytes(self._stdout_buf[:newline]).decode("utf-8", "replace").strip()
+            del self._stdout_buf[: newline + 1]
             if line.startswith("ENGINE_READY port="):
                 self.port = int(line.split("=", 1)[1])
                 self.client.connect_to(self.port, self.token)

@@ -114,7 +114,9 @@ class FakeIB:
                     price=price,
                     time=NOW,
                 ),
-                commissionReport=SimpleNamespace(commission=2.0, currency="USD"),
+                commissionReport=SimpleNamespace(
+                    execId=f"E{self.exec_seq}", commission=2.0, currency="USD"
+                ),
             )
         )
         sym = f"{trade.contract.symbol}{trade.contract.currency}"

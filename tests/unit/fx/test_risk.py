@@ -264,3 +264,38 @@ def test_old_state_without_peak_still_loads() -> None:
 def test_max_drawdown_config_is_validated(bad: float) -> None:
     with pytest.raises(ValueError, match="max_drawdown_pct"):
         RiskConfig(max_drawdown_pct=bad)
+
+
+@pytest.mark.parametrize(
+    ("held", "direction", "stop", "target"),
+    [
+        (-26_000, Direction.LONG, 1.0780, 1.0840),
+        (26_000, Direction.SHORT, 1.0820, 1.0760),
+    ],
+)
+def test_reversal_checks_final_open_exposure(
+    held: float, direction: Direction, stop: float, target: float
+) -> None:
+    positions = {"EURUSD": Position("EURUSD", held, 1.08, NOW, "existing")}
+    request = TradeRequest("EURUSD", direction, stop, target, 0.8, "reverse")
+    decision = evaluate(manager(max_currency_exposure_pct=50.0), request, positions=positions)
+    assert not decision.approved
+    assert "currency_exposure" in codes(decision)
+
+
+@pytest.mark.parametrize(
+    ("direction", "stop", "target"),
+    [
+        (Direction.LONG, 1.0780, 1.0720),
+        (Direction.SHORT, 1.0820, 1.0880),
+        (Direction.LONG, 1.0780, 1.08005),
+        (Direction.SHORT, 1.0820, 1.07995),
+    ],
+)
+def test_take_profit_must_be_on_profitable_side(
+    direction: Direction, stop: float, target: float
+) -> None:
+    request = TradeRequest("EURUSD", direction, stop, target, 0.8, "invalid-target")
+    decision = evaluate(manager(), request)
+    assert not decision.approved
+    assert "take_profit" in codes(decision)

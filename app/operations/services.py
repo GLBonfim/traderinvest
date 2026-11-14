@@ -203,6 +203,7 @@ class SystemServices:
             prev = cal_.previous_session(self.cal, session)
             has_earlier = s.scalar(
                 select(func.count(PriceBar.id)).where(
+                    PriceBar.instrument_id == self._instrument_id(s),
                     PriceBar.provider == self.provider.name,
                     PriceBar.timeframe == "1d",
                     PriceBar.ts < cal_.session_times(self.cal, session)[0].to_pydatetime(),

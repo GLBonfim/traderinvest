@@ -398,7 +398,11 @@ class RiskManager:
         ok("stop_loss", True, f"stop loss {stop}")
         dist = abs(entry - stop)
         if req.take_profit is not None:
-            rr = abs(req.take_profit - entry) / dist
+            target = req.take_profit
+            if not (target > entry if side is Side.BUY else target < entry):
+                ok("take_profit", False, "take profit do lado errado")
+                return self._refuse(checks)
+            rr = abs(target - entry) / dist
             ok(
                 "risk_reward",
                 rr >= cfg.min_risk_reward,
@@ -449,9 +453,7 @@ class RiskManager:
             account.free_margin - margin_needed >= 0.5 * equity,
             f"margem livre após a ordem {account.free_margin - margin_needed:.2f}",
         )
-        exposure = self._exposure_after(
-            positions, quotes, currency, req.pair, cur_units + side.sign * units
-        )
+        exposure = self._exposure_after(positions, quotes, currency, req.pair, side.sign * units)
         worst = max(exposure.items(), key=lambda kv: abs(kv[1]), default=("-", 0.0))
         limit = cfg.max_currency_exposure_pct / 100.0 * equity
         ok(

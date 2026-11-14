@@ -98,8 +98,8 @@ class FxConfig(BaseModel):
     @field_validator("timeframe")
     @classmethod
     def _tf(cls, v: str) -> str:
-        if v not in ("M15", "H1"):
-            raise ValueError("timeframe must be M15 or H1")
+        if v not in ("M5", "M15", "H1"):
+            raise ValueError("timeframe must be M5, M15 or H1")
         return v
 
     @field_validator("environment")
@@ -111,6 +111,8 @@ class FxConfig(BaseModel):
 
     @model_validator(mode="after")
     def _convertible(self) -> "FxConfig":
+        if self.timeframe == "M5" and self.environment is not Environment.SIMULATION:
+            raise ValueError("M5 configuration is SIMULATION only")
         ccys = {c for p in self.pairs for c in (PAIRS[p].base, PAIRS[p].quote)}
         if self.account_currency not in ccys:
             raise ValueError("the account currency must appear in at least one configured pair")

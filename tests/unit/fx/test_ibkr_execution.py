@@ -223,3 +223,49 @@ def test_close_still_allowed_after_slow_lookups() -> None:
     ib.on_qualify = lambda: now.__setitem__(0, now[0] + timedelta(seconds=30))
     st = run(ex.close_position("EURUSD", 20_000, "P-m-EURUSD-1", "P-m-EURUSD-1:x"))
     assert st.state is OrderState.FILLED and ib.positions["EURUSD"] == 0
+
+
+@pytest.mark.parametrize("bad", ["missing", "sentinel", "negative", "wrong_id", "incomplete"])
+def test_commission_confirmation_requires_complete_matching_reports(bad: str) -> None:
+    ib = session()
+    ex = executor(ib)
+    run(ex.live_quotes(["EURUSD"]))
+    run(ex.place_bracket(req()))
+    trade = ib.by_ref(req().client_order_id)
+    report = trade.fills[0].commissionReport
+    if bad == "missing":
+        report.currency = ""
+    elif bad == "sentinel":
+        report.commission = 1e308
+    elif bad == "negative":
+        report.commission = -1
+    elif bad == "wrong_id":
+        report.execId = "different-execution"
+    else:
+        trade.orderStatus.filled += 1000
+    assert run(ex.confirmed_commission(req().client_order_id)) is None
+
+
+def test_commission_zero_is_confirmed_and_execution_replay_not_double_charged() -> None:
+    ib = session()
+    ex = executor(ib)
+    run(ex.place_bracket(req()))
+    trade = ib.by_ref(req().client_order_id)
+    trade.fills[0].commissionReport.commission = 0.0
+    trade.fills.append(trade.fills[0])
+    confirmed = run(ex.confirmed_commission(req().client_order_id))
+    assert confirmed is not None and confirmed["total"] == 0.0
+    assert len(confirmed["executions"]) == 1
+
+
+def test_commission_foreign_currency_requires_fresh_live_conversion() -> None:
+    ib = session()
+    now = [NOW]
+    ex = executor(ib, clock=lambda: now[0])
+    run(ex.place_bracket(req()))
+    assert run(ex.confirmed_commission(req().client_order_id)) is None
+    run(ex.live_quotes(["EURUSD"]))
+    confirmed = run(ex.confirmed_commission(req().client_order_id))
+    assert confirmed is not None and confirmed["total"] == pytest.approx(2 / 1.10003)
+    now[0] += timedelta(seconds=11)
+    assert run(ex.confirmed_commission(req().client_order_id)) is None

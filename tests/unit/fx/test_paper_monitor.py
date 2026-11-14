@@ -108,3 +108,25 @@ def test_decision_reasons_do_not_misrepresent_a_pattern_as_a_fill() -> None:
     assert "Sem padrão" in pair_reason({"tradable": True, "patterns": []}, True)
     assert "BUY bloqueadas" in pair_reason({"tradable": True, "patterns": [{"direction": 1}]}, True)
     assert "depende" in pair_reason({"tradable": True, "patterns": [{"direction": -1}]}, True)
+
+
+def test_fee_settlement_is_not_projected_as_physical_position(tmp_path: Path) -> None:
+    from tests.unit.fx.test_pilot import cycle, make
+
+    root = tmp_path / "fee-lab"
+    p, ib, _, clock = make(root, armed=True)
+    cycle(p)
+    (eid,) = p.state.open
+    ib.hit(f"{eid}:sl")
+    ib.by_ref(f"{eid}:sl").fills[0].commissionReport.currency = ""
+    cycle(p)
+    status = p.status() | {"observed_at": clock.now.isoformat()}
+    (root / "status.json").write_text(json.dumps(status), encoding="utf-8")
+    before = hashlib.sha256((root / "pilot.sqlite-wal").read_bytes()).hexdigest()
+    snap = read_monitor(root, clock.now, tmp_path / "cache")
+    assert snap["journal_ok"] and snap["status"]["open"] == {}
+    assert eid in snap["status"]["accounting_pending"]
+    assert snap["status"]["accounting_provisional"]
+    assert eid in p.store.get_state("pilot")["open"]  # durable budget/restart gate retained
+    assert hashlib.sha256((root / "pilot.sqlite-wal").read_bytes()).hexdigest() == before
+    p.store.close()

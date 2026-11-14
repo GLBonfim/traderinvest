@@ -10,6 +10,7 @@ import json
 import math
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,9 +21,12 @@ import pandas as pd
 from app.candles.engine import CandlestickEngine
 from app.candles.knowledge import VERSION as CANDLE_KNOWLEDGE_VERSION
 from app.candles.knowledge import explain_pattern
+from app.candles.lesson_h1 import VERSION as LESSON_H1_VERSION
+from app.candles.lesson_h1 import analyze_h1, permits
 from app.fx.agents.trained import LinearModel, feature_frame, model_signals, retirement_decision
 from app.fx.ibkr.budget_settings import BudgetRiskManager, apply_settings, configure, load_settings
 from app.fx.ibkr.execution import IbkrPaperExecutor
+from app.fx.ibkr.lab_control import lesson_h1_setting
 from app.fx.ibkr.paper import mask
 from app.fx.ibkr.pilot import (
     LIVE_PORTS,
@@ -46,7 +50,7 @@ CONSENT = "EXPERIMENTO-SOMENTE-DEMO"
 ROLES = {"reversao": "reversal", "continuacao": "continuation", "impulso": "momentum"}
 
 
-def market_analysis(mid: pd.DataFrame) -> dict[str, Any]:
+def market_analysis(mid: pd.DataFrame, *, lesson_h1: bool = False) -> dict[str, Any]:
     """The analyst consumes closed bars only; context is passed verbatim to specialists."""
     f = feature_frame(mid, "H1").iloc[-1]
     analysis = CandlestickEngine().analyze(mid.assign(volume=0.0), timeframe="H1")
@@ -65,6 +69,7 @@ def market_analysis(mid: pd.DataFrame) -> dict[str, Any]:
     ]
     finite = all(math.isfinite(float(f[n])) for n in ("atr", "er", "volatility_rank", "sma_gap"))
     return {
+        **({"lesson_h1": analyze_h1(mid)} if lesson_h1 else {}),
         "analyst": "analista-mercado-v1",
         "knowledge_version": CANDLE_KNOWLEDGE_VERSION,
         "candle_observations": [
@@ -91,7 +96,12 @@ def market_analysis(mid: pd.DataFrame) -> dict[str, Any]:
 
 
 def specialist(
-    role: str, context: dict[str, Any], model: LinearModel, mid: pd.DataFrame
+    role: str,
+    context: dict[str, Any],
+    model: LinearModel,
+    mid: pd.DataFrame,
+    *,
+    lesson_required: bool = False,
 ) -> tuple[pd.Series, str] | None:
     if not context["tradable"]:
         return None
@@ -107,6 +117,8 @@ def specialist(
     p = max(candidates, key=lambda item: item["strength"])
     forecast = model_signals(mid, model).iloc[-1]
     agreement = int(forecast["dir"]) == p["direction"]
+    if lesson_required and not permits(context, p["direction"], agreement):
+        return None
     score = min(0.95, 0.56 + 0.24 * p["strength"] + (0.1 if agreement else 0.0))
     return pd.Series(
         {
@@ -181,7 +193,9 @@ class FundedPaperExecutor(IbkrPaperExecutor):
 
     cash_guard: Any = None
 
-    async def place_bracket(self, req: OrderRequest) -> OrderStatus:
+    async def place_bracket(
+        self, req: OrderRequest, guard: Callable[[], None] | None = None
+    ) -> OrderStatus:
         if self.cash_guard is not None:
             await self.cash_guard()
         self.verify_paper()
@@ -220,12 +234,17 @@ class FundedPaperExecutor(IbkrPaperExecutor):
             raise ExecutionError(
                 "quote cash cannot fund stop plus gap/cost buffer", ambiguous=False
             )
-        return await super().place_bracket(req)
+        return await super().place_bracket(req, guard=guard)
 
 
 class CandleLab(PaperPilot):
     def __init__(
-        self, *args: Any, cohort: dict[str, Any], funded_eur_only: bool = False, **kwargs: Any
+        self,
+        *args: Any,
+        cohort: dict[str, Any],
+        funded_eur_only: bool = False,
+        lesson_h1: bool = False,
+        **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.risk = BudgetRiskManager(
@@ -235,6 +254,7 @@ class CandleLab(PaperPilot):
         self.budget_status: dict[str, Any] = {"state": "current", "message": "Configuração atual."}
         configure(self, self.budget_settings)
         self.funded_eur_only = funded_eur_only
+        self.lesson_h1 = lesson_h1
         self.cohort = cohort
         self.roles = {a["model"]["model_id"]: a["role"] for a in cohort["agents"]}
         self.contexts: dict[str, Any] = {}
@@ -277,7 +297,7 @@ class CandleLab(PaperPilot):
                 if len(bars) < 260 or bars.index[-1] != bar_open:
                     continue
                 mid = mid_of(bars.iloc[-260:])
-                context = market_analysis(mid)
+                context = market_analysis(mid, lesson_h1=self.lesson_h1)
                 spread = (bars.iloc[-1]["ask_close"] - bars.iloc[-1]["bid_close"]) / pair(
                     sym
                 ).pip_size
@@ -291,7 +311,23 @@ class CandleLab(PaperPilot):
                 if pd.Timestamp(now) < pd.Timestamp(self.models[model_id].training_end):
                     continue
                 self.state.last_signal_bar[f"{model_id}|{sym}"] = bar_open.isoformat()
-                result = specialist(self.roles[model_id], context, self.models[model_id], mid)
+                result = specialist(
+                    self.roles[model_id],
+                    context,
+                    self.models[model_id],
+                    mid,
+                    lesson_required=self.lesson_h1,
+                )
+                if self.lesson_h1:
+                    self.journal(
+                        "lesson_evaluation",
+                        symbol=sym,
+                        model_id=model_id,
+                        version=LESSON_H1_VERSION,
+                        accepted=result is not None,
+                        lesson=context.get("lesson_h1"),
+                        decision="proposal" if result is not None else "NO TRADE",
+                    )
                 if result is None:
                     continue
                 row, pattern = result
@@ -381,6 +417,8 @@ class CandleLab(PaperPilot):
                 )
             },
             market_context=self.contexts,
+            lesson_h1_enabled=self.lesson_h1,
+            lesson_h1_version=LESSON_H1_VERSION if self.lesson_h1 else None,
             observed_at=self.clock().isoformat(),
             entry_until=self.entry_until.isoformat(),
             agents=[
@@ -496,18 +534,30 @@ async def run(args: argparse.Namespace) -> int:
                 max_open_positions=3,
             ),
         )
-        pilot = CandleLab(
+        lab_class: Any = CandleLab
+        lab_extra: dict[str, Any] = {}
+        fetcher = ib_bars_fetcher(ib)
+        if getattr(args, "timeframe", "H1") == "M5":
+            from app.fx.ibkr.candle_m5_lab import CandleM5Lab
+            from app.fx.ibkr.m5_pipeline import native_fetcher
+
+            lab_class = CandleM5Lab
+            lab_extra = {"m5_source": args.m5_source}
+            fetcher = native_fetcher(ib)
+        pilot = lab_class(
             ex,
             store,
             registry,
-            ib_bars_fetcher(ib),
+            fetcher,
             ib_positions_fetcher(ib),
             cohort=cohort,
             funded_eur_only=args.funded_eur_only,
+            lesson_h1=lesson_h1_setting(root, getattr(args, "lesson_h1", False))[0],
             config=config,
             armed=args.arm and not args.funded_eur_only,
             stop_file=root / "STOP",
             say=say,
+            **lab_extra,
         )
         pilot.journal(
             "research_start",
@@ -515,6 +565,9 @@ async def run(args: argparse.Namespace) -> int:
             agents=pilot.state.active_ids,
             analyst="analista-mercado-v1",
             historical_approval=False,
+            lesson_h1_enabled=pilot.lesson_h1,
+            lesson_h1_version=LESSON_H1_VERSION if pilot.lesson_h1 else None,
+            lab_control=lesson_h1_setting(root, getattr(args, "lesson_h1", False))[1],
         )
         (root / "status.json").write_text(
             json.dumps(
@@ -523,11 +576,33 @@ async def run(args: argparse.Namespace) -> int:
             encoding="utf-8",
         )
         for symbol in pilot.config.symbols:
+            if getattr(args, "timeframe", "H1") == "M5":
+                from app.fx.ibkr.m5_pipeline import BAR, assess, closed_native_m5
+
+                raw = await pilot.fetch_bars(symbol, "M5")
+                closed = raw.loc[raw.index + BAR <= pd.Timestamp(pilot.clock())]
+                if not closed.empty:
+                    bars = closed_native_m5(
+                        closed, symbol, (closed.index[-1] + BAR).to_pydatetime()
+                    )
+                    if not bars.empty:
+                        context, _ = assess(
+                            bars, symbol, pilot.m5_models, pilot.m5_roles, pilot.m5_protocol
+                        )
+                        context["bootstrap_only_no_entry"] = True
+                        context["age_seconds"] = (
+                            pd.Timestamp(pilot.clock()) - (bars.index[-1] + BAR)
+                        ).total_seconds()
+                        pilot.contexts[symbol] = context
+                        pilot.journal("m5_bootstrap", symbol=symbol, context=context)
+                continue
             bars = closed_model_bars(
                 await pilot.fetch_bars(symbol, "H1"), symbol, "H1", pilot.clock()
             )
             if len(bars) >= 260:
-                pilot.contexts[symbol] = market_analysis(mid_of(bars.iloc[-260:]))
+                pilot.contexts[symbol] = market_analysis(
+                    mid_of(bars.iloc[-260:]), lesson_h1=pilot.lesson_h1
+                )
                 pilot.journal(
                     "analyst_bootstrap",
                     symbol=symbol,
@@ -538,11 +613,16 @@ async def run(args: argparse.Namespace) -> int:
         while True:
             if (root / "STOP").exists():
                 raise PilotStopError("STOP requested; paper lab disarmed")
-            if args.arm and args.funded_eur_only and pilot.clock() < pilot.entry_until:
+            if args.funded_eur_only and pilot.clock() < pilot.entry_until:
                 if funding["state"] != "complete":
                     from app.fx.ibkr.funded_setup import ensure_funding
 
-                    funding = await ensure_funding(ib, root)
+                    if args.arm:
+                        funding = await ensure_funding(ib, root)
+                    else:
+                        funding = json.loads((root / "funding.json").read_text())
+                        if funding.get("state") != "complete":
+                            raise ValueError("readonly mode requires existing confirmed funding")
                     if funding["state"] == "complete":
                         baseline = {k: float(v) for k, v in funding["baseline_positions"].items()}
                         if set(baseline) != set(pilot.config.symbols) or any(
@@ -564,7 +644,9 @@ async def run(args: argparse.Namespace) -> int:
                             pilot.fetch_positions = positions_without_funding(
                                 ib_positions_fetcher(ib), baseline
                             )
-                pilot.armed = funding["state"] == "complete" and not pilot.risk.state.kill_switch
+                pilot.armed = (
+                    args.arm and funding["state"] == "complete" and not pilot.risk.state.kill_switch
+                )
             if not ib.isConnected():
                 raise ConnectionError(
                     "Gateway desconectado; supervisor deve rever antes de retomar"
@@ -670,6 +752,13 @@ def main() -> int:
     parser.add_argument("--arm", action="store_true")
     parser.add_argument("--funded-eur-only", action="store_true")
     parser.add_argument("--cash-ledger", action="store_true")
+    parser.add_argument(
+        "--lesson-h1",
+        action="store_true",
+        help="Apply Aula02 conservative H1 veto; no M5 activation",
+    )
+    parser.add_argument("--timeframe", choices=("H1", "M5"), default="H1")
+    parser.add_argument("--m5-source", type=Path, default=Path("data/fx/training/run-m5-20261018"))
     parser.add_argument("--once", action="store_true")
     return asyncio.run(run(parser.parse_args()))
 
