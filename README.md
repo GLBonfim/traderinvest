@@ -8,6 +8,25 @@ S&P 500 (via SPY) and designed to extend to other instruments and asset classes.
 > and to say `NO STATISTICAL EDGE FOUND` or `INSUFFICIENT EVIDENCE` when it does not.
 > **Real-money execution is disabled and blocked in code.**
 
+## Project status (2026-11-14)
+
+- **No strategy is approved.** No research line has produced pre-registered evidence of an
+  edge after costs. Nothing here may be used to trade real money.
+- **Real-money execution is blocked** (ADR-0006). Broker work stays on paper or sandbox
+  accounts: Alpaca paper (Phase 15) and the IBKR paper pilot (ADR-0039), which had no eligible
+  candidate on 2026-10-18.
+- **Research lines and their outcomes:**
+
+  | Research line | Outcome | Record |
+  |---|---|---|
+  | SPY timing baselines (Phases 7–9) | Not distinguishable from buy & hold | README "Status" below |
+  | Supervised ML on SPY (Phase 10) | NO INCREMENTAL EDGE FOUND | Phase 10 |
+  | Intraday FX agents (M15, H1, M5) | No candidate passed pre-registered validation | ADR-0040 context |
+  | Multi-asset trend v2 (`app/trend`) | **Closed at T3**: the annual trading cost is above 0.50 % at every capital of the grid, and the net return is below the equal-weight and 60/40 benchmarks in both periods; sealed test never opened | ADR-0040, ADR-0041, [docs/trend/](docs/trend/) |
+
+- **Archive:** the closed research is kept, not deleted. The multi-asset trend code, registry,
+  manifest chain, reports and run records are on branch `feature/multi-asset-trend`.
+
 ## TraderInvest FX (desktop Forex platform)
 
 A native Windows application with five agents (Trend, Momentum, Mean Reversion, Regime filter,
@@ -298,7 +317,8 @@ All settings come from environment variables (or `.env`). See [.env.example](.en
 
 | Provider | Role | Status |
 |---|---|---|
-| yfinance | Prototyping only (unofficial, ToS-restricted, ~730 days of 1h history) | SPY daily ✅ |
+| yfinance | Prototyping only (unofficial, ToS-restricted, ~730 days of 1h history) | SPY daily ✅; UCITS/US ETF daily for the closed trend research |
+| ECB Data Portal | USD/EUR reference rate, EONIA and €STR (closed trend research) | Used offline ✅ |
 | Massive (Polygon) | Intended primary OHLCV provider | Future |
 | Alpha Vantage / FMP / FRED | Macro, calendars, point-in-time data | Future |
 
@@ -330,12 +350,5 @@ instruction through this risk layer; it is a local simulation only.
 
 ## GitHub
 
-The repository is local for now. To connect a **private** GitHub repository:
-
-```bash
-# create an empty private repo on github.com (no README/license), then:
-git remote add origin git@github.com:<user>/<repo>.git
-git push -u origin main
-```
-
-Before every push, confirm that `git status` shows no `.env` or data files.
+The repository has a GitHub remote (`origin`). Before every push, confirm that `git status`
+shows no `.env` or data files.

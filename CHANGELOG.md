@@ -3,6 +3,65 @@
 All notable changes are documented here. Format: [Keep a Changelog](https://keepachangelog.com/),
 versioning: [SemVer](https://semver.org/).
 
+## [Unreleased] — branch `feature/multi-asset-trend`
+
+### Closed (multi-asset trend research, 2026-11-14, ADR-0041)
+- Owner decision: the research line is closed after T3. Reasons:
+  - the stop condition of design section 8.3 was reached: the annual trading cost is above
+    0.50 % of capital at every capital of the grid (25 000 EUR: 1.84 %; 500 EUR: 18.43 %);
+  - with realistic costs, the net return is below the equal-weight and 60/40 benchmarks at
+    every capital, in both the development and validation periods.
+- The sealed test stays closed and unclaimed. No variant was created. Nothing was deleted.
+  Real-money execution stays blocked (ADR-0006).
+- Dated notes added to `docs/trend/t3-desenvolvimento-validacao.md` (original text kept); the
+  README states the project status.
+
+### Added (multi-asset trend v2, 2026-11-14)
+- Design v2 for one fixed, slow multi-asset trend strategy
+  (`docs/superpowers/specs/2026-11-14-multi-asset-trend-v2-design.md`, with the 2026-11-04 v1
+  design it supersedes in part) and ADR-0040: 10–15 UCITS exposures, daily 200-session SMA
+  long/cash signal, volatility-scaled weights, fill at the next close, EUR costs, 60/20/20 split
+  with a one-time sealed test.
+- `app/core/integrity.py` and `bootstrap_summary` in `app/validation/resampling.py`, copied
+  byte-identical from `feature/fx-desktop-platform` for reuse.
+- Phase T1 (`app/trend`): pre-registered 11-asset universe (`registry/universe.json`), free data
+  acquisition from Yahoo Finance and the ECB into hashed, never-overwritten snapshots
+  (`sources.py`), quality audit (`audit.py`: calendars, duplicates, stale prices, dividend
+  adjustment, EUR conversion staleness, EONIA/€STR chain, evaluable window, 60/20/20 partitions),
+  frozen manifest (`registry/manifest.json`, `registry/audit.json`) and CLI
+  `python -m app.trend.cli fetch|audit|verify`. Owner report:
+  `docs/trend/t1-universo-e-dados.md`. 22 tests in `tests/unit/trend`.
+- Owner decisions at T1 (design section 18, ADR-0040 amendment): commission confirmed, cost
+  tiers per asset and 60/40 annual rebalance recorded; proxy TERs added to the registry with the
+  `(TER_us − TER_eu)` adjustment rule; `series_rule_violations` enforces "same index or exclude";
+  `cli amend` amends the manifest with a hash chain (data unchanged; `93d4e409…` →
+  `5f50f2ae…`); `cli verify` reports rule violations, which block the replay. 27 tests.
+- Asset list approved: JAPAN_EQ → IQQJ and EM_EQ → IQQE (own EUR series, class B registered
+  before download); `cli fetch --add-missing` and `cli amend --reaudit-snapshot` add files to
+  the snapshot and re-audit under a hash chain (`5f50f2ae…` → `7276157c…`; split unchanged).
+- Phase T2 (`app/trend`): `signal.py` (SMA200 state), `allocator.py` (60-session volatility,
+  vol-capped 1/N weights, state-change and 25 % drift rule, whole units), `costs.py` (IBKR Fixed
+  commission, spread and slippage by class, TER table of section 8.2), `data.py` (EUR total-
+  return unit prices per scenario, ECB conversion failing closed on stale rates, EONIA/€STR
+  cash, scheduled period ends, unit anchors), `simulator.py` (causal replay, fill at the next
+  close, sells before buys, cash never negative, daily accounting identities), `strategy.py`,
+  `benchmarks.py` (equal weight monthly, 60/40 yearly, EUR cash), `metrics.py` (metrics, seeded
+  block bootstrap, six gates, verdict), `guard.py` (sealed boundary and one permanent claim),
+  `runner.py`. Manifest amended with unit anchors (`7276157c…` → `d945583a…`). 68 tests,
+  including a hand-calculated accounting case, causality under mutated/deleted/appended future
+  data and byte-identical reproduction. The strategy was not run on real data (loading and
+  anchor checks only; see `docs/trend/t2-motor.md`). Owner review of design section 19:
+  choices 1–5 and 7 and the anchor amendment approved; exits never depend on volatility
+  (choice 6, `test_strategy.py`); the sealed claim receipt must be committed and pushed before
+  any sealed read, enforced by `guard.require_published_claim` (choice 8). 73 tests.
+- Phase T3 (`app/trend/research.py`, `cli t3`): sealed boundary committed before any run;
+  development and validation replays for 3 cost scenarios, 5 capitals, the strategy and 3
+  benchmarks. Stop condition of design section 8.3 reached: no capital of the grid has an
+  annual trading cost below 0.50 % (25 000 EUR: 1.84 %), so there is no reference capital, no
+  T4, and the sealed test stays closed and unclaimed. Owner report
+  `docs/trend/t3-desenvolvimento-validacao.md`; run records in `docs/trend/t3/` with SHA-256.
+  77 tests.
+
 ## [Unreleased] — branch `feature/fx-desktop-platform`
 
 ### Added

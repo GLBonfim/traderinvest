@@ -1254,3 +1254,95 @@ Retrospective selection on already-inspected history is not independent validati
 **Consequences.** The pilot produces prospective paper evidence, not proof of an edge. On
 2026-10-18 no candidate was eligible, so it observes and journals but does not trade.
 
+## ADR-0040 — Multi-asset trend research v2: one fixed rule, sealed test, offline only
+
+**Status:** accepted 2026-11-14 (T0 approved by the owner with corrections). Offline scope
+pre-approved phase by phase. Design: `docs/superpowers/specs/2026-11-14-multi-asset-trend-v2-design.md`,
+which supersedes in part the 2026-11-04 design. Numbering continues after ADR-0039, written on
+`feature/fx-desktop-platform` and on `main` since PR #1; `origin/main` was merged into
+`feature/multi-asset-trend` on 2026-11-14, before T2.
+
+**Context.** No intraday FX agent (M15, H1, M5) and no SPY timing rule passed pre-registered
+validation. The owner ended that line of research and chose to test a single slow trend strategy
+across a diversified universe, with fixed parameters and one sealed test.
+
+**Decision.**
+- Universe: 10–15 diversified exposures (equities by region, government and corporate bonds,
+  gold, broad commodities, listed real estate), each mapped to a UCITS ETF/ETC available at IBKR
+  Ireland. The list is fixed in T1, with justification, before any result.
+- Signal per asset on daily closed EUR total-return bars: `LONG` if the close is strictly above
+  its 200-session SMA, `CASH` otherwise, `INSUFFICIENT_DATA` (never trades) before 200 sessions.
+- Weight `(1/N) × min(1, 10 % / vol_60)`; no leverage, no shorts; idle cash earns
+  €STR − 0.25 p.p. Decision after the close of `T`; one execution rule for every asset: fill at
+  the close of the next session (`T+1`); open prices are never used. Trade only on a state change
+  or a relative drift above 25 %. Parameters 200, 60 and 10 % are not tuned.
+- Evidence protocol: data audit and hashed manifest first; fixed 60/20/20 chronological split;
+  each partition (strategy and benchmarks) starts in cash, with earlier data allowed only to warm
+  up the SMA and volatility; sealed test run once through a permanent claim (holdout-guard
+  pattern, re-implemented in `app/trend`); cost scenarios zero / realistic / double, with TER
+  never double counted; capital grid 500–25 000 EUR, gates evaluated at the smallest capital with
+  annual trading cost below 0.50 % (stop if none), 2 000 and 5 000 EUR reported for information;
+  benchmarks equal-weight, global 60/40 and EUR cash; six all-must-pass gates.
+- Verdict: `EDGE` if all gates pass and the one-sided 95 % block-bootstrap lower bound of the
+  Sharpe in excess of EUR cash is above zero; `INSUFFICIENT EVIDENCE` if the gates pass but the
+  bound is not, or if evaluation fails; otherwise `NO STATISTICAL EDGE FOUND`. The same bound over
+  the full history is secondary evidence only.
+- Code only in `app/trend` and `tests/unit/trend`; `app/fx`, `app/desktop`, `app/engine`,
+  `app/paper`, `app/broker`, `app/ml`, `app/candles`, `app/price_action` are frozen. Reuse only
+  `app.validation.resampling` and `app.core.integrity` (both copied byte-identical from
+  `feature/fx-desktop-platform`, since `main` predates them).
+- Free data only; if insufficient, stop and report.
+- No broker connection and no orders in this delivery. ADR-0006 stays in force.
+
+**Consequences.** The delivery ends with the sealed test. `EDGE` may proceed to a separately
+designed demo (IBKR paper) stage; `INSUFFICIENT EVIDENCE` with all gates passed may also proceed
+to demo, with any real-money decision deferred; an evaluation failure stops the work;
+`NO STATISTICAL EDGE FOUND` ends it. Creating variants to rescue a result is forbidden.
+
+**Amendment (2026-11-14, owner decisions at T1, before any result).** Commission IBKR Pro
+Fixed confirmed against the IBKR Ireland price list; spread/slippage estimates approved with
+each asset's tier in the manifest; global 60/40 rebalanced annually, starting in cash, same
+costs. Proxy rule: a US ETF proxy must track the product's own index or the asset is excluded
+(never a similar index); signal and EUR conversion use only values known at `D(T)`; a proxy's
+return is adjusted by the TER difference `(TER_us − TER_eu)`. The manifest is amended with a
+hash chain (data, window and split unchanged). Second round: Japan and emerging markets move to
+the non-IMI products IQQJ and IQQE (own EUR series, cost class B fixed before download); the
+proxy rule admits a US-listed ETF or ETN on the same index (DJP kept, ETN price/index gap
+declared); the asset list is approved. Design section 18. T2 (2026-11-14): unit-price
+anchors added to the manifest (`unit_anchors`, development data only); implementation choices in
+design section 19, pending owner approval.
+
+## ADR-0041 — Multi-asset trend research closed at T3 (stop condition)
+
+**Status:** accepted 2026-11-14 (owner decision). Closes the research line of ADR-0040.
+
+**Context.** Phase T3 replayed the pre-registered rule of ADR-0040 on the development
+(2009-10-08 to 2019-12-31) and validation (2020-01-02 to 2023-05-31) partitions, for three cost
+scenarios, five capitals and three benchmarks. The sealed boundary had been committed before
+the first run (`214d892`). Results, run records and their SHA-256 are in commit `9a176c4`
+(`docs/trend/t3-desenvolvimento-validacao.md`, `docs/trend/t3/`).
+
+**Findings.**
+- **Stop condition of design section 8.3 (owner decision 3 at T0).** No capital of the grid
+  has a pooled development + validation annual trading cost below 0.50 % of capital:
+  500 EUR 18.43 %, 2 000 EUR 13.46 %, 5 000 EUR 7.56 %, 10 000 EUR 3.93 %, 25 000 EUR 1.84 %.
+  The orders are mostly SMA200 entries and exits (about 110 to 130 per year at 25 000 EUR). Each
+  order is about 1 250 to 1 600 EUR and pays the EUR 3 minimum commission. So there is no
+  reference capital, and the six gates cannot be evaluated as pre-registered.
+- **Net return below the benchmarks.** With realistic costs, the strategy's annual return is
+  below both the equal-weight and the global 60/40 benchmarks at every capital, in both
+  partitions. At 25 000 EUR: development 1.05 % against 6.29 % and 8.85 %; validation −0.82 %
+  against 1.75 % and 2.49 %.
+
+**Decision.** The multi-asset trend research is closed.
+- No T4. The sealed test (2023-06-01 to 2026-11-13) stays closed and unclaimed; no sealed row
+  was read.
+- No variant of the strategy is created (ADR-0040).
+- The code (`app/trend`), the registry, the manifest chain and the reports stay in the
+  repository as an archive. Nothing is deleted.
+- No strategy of this repository is approved for use. Real-money execution stays blocked
+  (ADR-0006).
+
+**Consequences.** Any future trading research needs a new design with its own pre-registration
+and owner approval. It may not reuse this sealed period as untouched evidence once its data
+have informed the new design.

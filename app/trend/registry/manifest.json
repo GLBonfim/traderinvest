@@ -1,0 +1,464 @@
+{
+  "adr": "ADR-0040",
+  "amendments": [
+    {
+      "date": "2026-11-14",
+      "previous_sha256": "93d4e4097b534405c1e0940807c59d8d06cbee46a24d118f2b3ff01400474055",
+      "reason": "Owner decisions on T1 (2026-11-14), before any result: IBKR Pro Fixed commission confirmed against the IBKR Ireland price list; spread/slippage estimates approved and per-asset tiers recorded; 60/40 with annual rebalance, start in cash, same costs; series rule conditions (a) same index or exclude, (b) only values known at D(T), (c) TER difference adjustment for US ETF proxies; index labels harmonised for GOLD and COMMOD. Data, window and partitions unchanged. Asset list pending owner review."
+    },
+    {
+      "changed_fields": [
+        "window",
+        "audit_sha256"
+      ],
+      "date": "2026-11-14",
+      "files_added": [
+        "price:IQQE.DE",
+        "price:IQQJ.DE"
+      ],
+      "files_dropped": [
+        "price:EEM",
+        "price:EWJ"
+      ],
+      "previous_sha256": "5f50f2aec2622ecb0323538268c83266f8c620c38fe322a6167b7e72bb6e82cc",
+      "reason": "Owner decisions 2026-11-14 (second round), before any result: JAPAN_EQ -> IQQJ (MSCI Japan) and EM_EQ -> IQQE (MSCI Emerging Markets), own EUR Xetra series, cost class B fixed before download (commit baf8529); EWJ and EEM files dropped; series rule admits a US-listed ETF or ETN on the same index (DJP kept); ETN price/index gap declared. Asset list approved by the owner."
+    },
+    {
+      "changed_fields": [],
+      "date": "2026-11-14",
+      "files_added": [
+        "anchor:8PSG.DE",
+        "anchor:IUSM.DE",
+        "anchor:IUSQ.DE",
+        "anchor:SXR1.DE",
+        "anchor:SXR8.DE",
+        "anchor:SXRS.DE"
+      ],
+      "files_dropped": [],
+      "previous_sha256": "7276157c672c6465bc5cdecbd480c01b09326c6eec6a87a785a8d92e51886f85",
+      "reason": "T2 (design 6.4), before any result: Xetra series of the six proxy assets' executable products added as unit-price anchors only (anchor:SXR8.DE, SXR1.DE, IUSM.DE, 8PSG.DE, SXRS.DE, IUSQ.DE); unit_anchors records, per asset, the anchor date (first product close on or after the evaluable start; own series: last session on or before it), the product's EUR close and the unit_scale constant, all from development-partition data."
+    }
+  ],
+  "audit_sha256": "696255374d90f8905f46ac4e9806f667bdbd25bbf5741dbd4ce2562484ae7df5",
+  "audit_verdict": "PASS",
+  "costs": {
+    "asset_tiers": {
+      "COMMOD": {
+        "cost_class": "C",
+        "half_spread_pct": 0.1,
+        "isin": "IE00BDFL4P12",
+        "product": "SXRS",
+        "slippage_pct": 0.05,
+        "ter_eu_pct": 0.19,
+        "ter_proxy_pct": 0.75
+      },
+      "EM_EQ": {
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "IE00B0M63177",
+        "product": "IQQE",
+        "slippage_pct": 0.03,
+        "ter_eu_pct": 0.18,
+        "ter_proxy_pct": null
+      },
+      "EUROPE_EQ": {
+        "cost_class": "A",
+        "half_spread_pct": 0.03,
+        "isin": "DE0002635307",
+        "product": "EXSA",
+        "slippage_pct": 0.02,
+        "ter_eu_pct": 0.2,
+        "ter_proxy_pct": null
+      },
+      "EUR_IG": {
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "IE0032523478",
+        "product": "IBCS",
+        "slippage_pct": 0.03,
+        "ter_eu_pct": 0.09,
+        "ter_proxy_pct": null
+      },
+      "EZ_GOV": {
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "LU0290355717",
+        "product": "XGLE",
+        "slippage_pct": 0.03,
+        "ter_eu_pct": 0.07,
+        "ter_proxy_pct": null
+      },
+      "GLOBAL_EQ": {
+        "cost_class": "C",
+        "half_spread_pct": 0.1,
+        "isin": "IE00B6R52259",
+        "product": "IUSQ",
+        "slippage_pct": 0.05,
+        "ter_eu_pct": 0.2,
+        "ter_proxy_pct": 0.32
+      },
+      "GLOBAL_RE": {
+        "cost_class": "C",
+        "half_spread_pct": 0.1,
+        "isin": "IE00B1FZS350",
+        "product": "IQQ6",
+        "slippage_pct": 0.05,
+        "ter_eu_pct": 0.59,
+        "ter_proxy_pct": null
+      },
+      "GOLD": {
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "IE00B579F325",
+        "product": "8PSG",
+        "slippage_pct": 0.03,
+        "ter_eu_pct": 0.12,
+        "ter_proxy_pct": 0.4
+      },
+      "JAPAN_EQ": {
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "IE00B02KXH56",
+        "product": "IQQJ",
+        "slippage_pct": 0.03,
+        "ter_eu_pct": 0.12,
+        "ter_proxy_pct": null
+      },
+      "PACXJ_EQ": {
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "IE00B52MJY50",
+        "product": "SXR1",
+        "slippage_pct": 0.03,
+        "ter_eu_pct": 0.2,
+        "ter_proxy_pct": 0.47
+      },
+      "US_EQ": {
+        "cost_class": "A",
+        "half_spread_pct": 0.03,
+        "isin": "IE00B5BMR087",
+        "product": "SXR8",
+        "slippage_pct": 0.02,
+        "ter_eu_pct": 0.07,
+        "ter_proxy_pct": 0.0945
+      },
+      "US_TSY": {
+        "cost_class": "B",
+        "half_spread_pct": 0.05,
+        "isin": "IE00B1FZS798",
+        "product": "IUSM",
+        "slippage_pct": 0.03,
+        "ter_eu_pct": 0.07,
+        "ter_proxy_pct": 0.15
+      }
+    },
+    "commission": {
+      "broker": "Interactive Brokers Ireland, IBKR Pro Fixed, Germany (Xetra)",
+      "confirmed_by_owner_on": "2026-11-14",
+      "maximum_eur": null,
+      "minimum_eur": 3.0,
+      "rate_pct": 0.05,
+      "source_status": "Confirmed by the owner against the IBKR Ireland price list (commissions, Germany/Xetra, IBKR Pro Fixed) on 2026-11-14."
+    },
+    "spread_slippage_status": "ESTIMATES, not measurements: no free, machine-readable Xetra spread source was found on 2026-11-14 (Deutsche Boerse pages load spreads by script). Approved by the owner on 2026-11-14; real values are measured in the demo phase."
+  },
+  "data_end": "2026-11-13",
+  "data_rules": {
+    "availability": "At D(T) = 23:00 Europe/Lisbon the signal and the EUR conversion use only values already published: Xetra close (17:30 CET), ECB reference rate (~16:00 CET) and US close (16:00 New York), all earlier than D(T) on every day. Fills happen at the asset's next close.",
+    "cash": "EONIA - 0.085 p.p. until 2019-09-30, EUR STR from 2019-10-01, minus 0.25 p.p., ACT/360, negative rates kept; interest from T-1 to T uses the rate for T-1.",
+    "data_end": "Last complete session before the snapshot; later rows are ignored.",
+    "eur_conversion": "USD series are divided by the ECB USD-per-EUR reference rate of the same date, or the latest earlier one; more than 4 weekdays of staleness fails closed.",
+    "master_calendar": "Union of the universe assets' provider rows.",
+    "sessions": "An asset's sessions are the provider's rows. Exchange-calendar differences are listed by the audit; a calendar session without a provider row is no session for that asset (its move is captured by the next row).",
+    "ter": "TER accrues per calendar day (TER / 365). An own series contains the product TER; a US ETF proxy contains its own TER and is adjusted by (TER_us - TER_eu) / 365 per calendar day. Scenario zero adds back the TER the series contains; double deducts one more TER_eu.",
+    "total_return": "Daily factor (close_t + dividend_t) / close_{t-1}; split-adjusted close; dividends gross at the ex-date, reinvested at that close. The provider's Adj Close is used only to verify the data."
+  },
+  "design": "docs/superpowers/specs/2026-11-14-multi-asset-trend-v2-design.md",
+  "files": [
+    {
+      "bytes": 341858,
+      "origin": "yfinance 1.7.0: Ticker('8PSG.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/8PSG.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:19:26+00:00",
+      "role": "anchor:8PSG.DE",
+      "sha256": "7aebaef1b78afb7ac72d97f0aac1fec6574462285bd5a87c21c610828a9afbec"
+    },
+    {
+      "bytes": 353399,
+      "origin": "yfinance 1.7.0: Ticker('IUSM.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IUSM.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:19:26+00:00",
+      "role": "anchor:IUSM.DE",
+      "sha256": "76edee019fd4c8e39532ae253d0a90e9ac6720783d9a539b184935cdf5e0f5e3"
+    },
+    {
+      "bytes": 301437,
+      "origin": "yfinance 1.7.0: Ticker('IUSQ.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IUSQ.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:19:27+00:00",
+      "role": "anchor:IUSQ.DE",
+      "sha256": "c2c2a669428ec2a71c9f3f839b38392914152ea5981a059b1d22fdcd6b437eba"
+    },
+    {
+      "bytes": 325175,
+      "origin": "yfinance 1.7.0: Ticker('SXR1.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/SXR1.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:19:25+00:00",
+      "role": "anchor:SXR1.DE",
+      "sha256": "0a6e069a50e14ba032b4a52226d7d1659c7e5911fd0da9c19138b6d6268cd113"
+    },
+    {
+      "bytes": 327720,
+      "origin": "yfinance 1.7.0: Ticker('SXR8.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/SXR8.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:19:24+00:00",
+      "role": "anchor:SXR8.DE",
+      "sha256": "bd671251fd68a2bc1444b4dc29e310891cbfa07b90ebff38a2e17af86baf9f12"
+    },
+    {
+      "bytes": 173658,
+      "origin": "yfinance 1.7.0: Ticker('SXRS.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/SXRS.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:19:27+00:00",
+      "role": "anchor:SXRS.DE",
+      "sha256": "4753aba226acc8dd1f38529ee17309f453c12f66577de88891ab6a0fc8a81c60"
+    },
+    {
+      "bytes": 1491483,
+      "origin": "https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A?format=csvdata",
+      "path": "2026-11-14/ecb/EXR_D.USD.EUR.SP00.A.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:30+00:00",
+      "role": "fx:USD",
+      "sha256": "9841ff429cd0542a49ea07a6d79c9db6809d44ea9250f88ca50329487301847c"
+    },
+    {
+      "bytes": 380823,
+      "origin": "yfinance 1.7.0: Ticker('ACWI').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/ACWI.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:30+00:00",
+      "role": "price:ACWI",
+      "sha256": "509cb2704ab1b72019a7196a3cfc585c518fc6fc720d552664ac651d3c87afe8"
+    },
+    {
+      "bytes": 404785,
+      "origin": "yfinance 1.7.0: Ticker('DJP').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/DJP.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:29+00:00",
+      "role": "price:DJP",
+      "sha256": "f727fdc3c3c01f95b385c23670b3b054741d6eac750e8137fb4328d92ee6e6be"
+    },
+    {
+      "bytes": 508819,
+      "origin": "yfinance 1.7.0: Ticker('EPP').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/EPP.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:28+00:00",
+      "role": "price:EPP",
+      "sha256": "6ebaf84f7a9bd3384946b02b9486d909ff19ba304e104bf880303c6e0b07fbf7"
+    },
+    {
+      "bytes": 384929,
+      "origin": "yfinance 1.7.0: Ticker('EXSA.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/EXSA.DE.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:27+00:00",
+      "role": "price:EXSA.DE",
+      "sha256": "e6711add8471ea6a9eb07e83a28c3fec663eddb829f3e6b5351db9ef3754b609"
+    },
+    {
+      "bytes": 452425,
+      "origin": "yfinance 1.7.0: Ticker('GLD').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/GLD.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:29+00:00",
+      "role": "price:GLD",
+      "sha256": "736707f7f1d98226a881eb962b42816296ccc18445848428c17622e41b5f5d99"
+    },
+    {
+      "bytes": 377629,
+      "origin": "yfinance 1.7.0: Ticker('IBCS.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IBCS.DE.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:29+00:00",
+      "role": "price:IBCS.DE",
+      "sha256": "0241af348df32adb57eb681d0af4b183ddc4c268e91f6ff858b950d97d5d4b76"
+    },
+    {
+      "bytes": 497584,
+      "origin": "yfinance 1.7.0: Ticker('IEF').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IEF.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:29+00:00",
+      "role": "price:IEF",
+      "sha256": "749823bdc95842c411393479a98e2a65e8bb66650c5296b82001353c9a4c9d91"
+    },
+    {
+      "bytes": 360378,
+      "origin": "yfinance 1.7.0: Ticker('IQQ6.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IQQ6.DE.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:30+00:00",
+      "role": "price:IQQ6.DE",
+      "sha256": "fbeda9178ea3dd36d870a92ddcfe371e619363ef2f2b614b53d08e3f41de4aa0"
+    },
+    {
+      "bytes": 382776,
+      "origin": "yfinance 1.7.0: Ticker('IQQE.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IQQE.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:05:23+00:00",
+      "role": "price:IQQE.DE",
+      "sha256": "c0775f7762f27596bcb3087645d5526e5234b6b6b7e63808984643cf70e93687"
+    },
+    {
+      "bytes": 382244,
+      "origin": "yfinance 1.7.0: Ticker('IQQJ.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/IQQJ.DE.csv",
+      "retrieved_at_utc": "2026-11-14T20:05:22+00:00",
+      "role": "price:IQQJ.DE",
+      "sha256": "088f3a609ee9875e2f0a01c3fa62d7206f14ea8876ca6a756fd2d1e1c6874736"
+    },
+    {
+      "bytes": 676690,
+      "origin": "yfinance 1.7.0: Ticker('SPY').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/SPY.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:26+00:00",
+      "role": "price:SPY",
+      "sha256": "6e260bdfb10f52b7002a42e1b4a5d5f976951a3a0615fad4d7ecb22c6ad20010"
+    },
+    {
+      "bytes": 375806,
+      "origin": "yfinance 1.7.0: Ticker('XGLE.DE').history(period='max', auto_adjust=False, actions=True)",
+      "path": "2026-11-14/yahoo/XGLE.DE.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:28+00:00",
+      "role": "price:XGLE.DE",
+      "sha256": "dc6ad0c47a011c66b063a8b94a7db11354b99e4a9bfdc492e6ae732af6ddd704"
+    },
+    {
+      "bytes": 2543761,
+      "origin": "https://data-api.ecb.europa.eu/service/data/EON/D.EONIA_TO.RATE?format=csvdata",
+      "path": "2026-11-14/ecb/EON_D.EONIA_TO.RATE.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:31+00:00",
+      "role": "rate:eonia",
+      "sha256": "e3dab718d57b468346ac7639480d47800fc73215cc6575fb840308dc14481cd8"
+    },
+    {
+      "bytes": 566306,
+      "origin": "https://data-api.ecb.europa.eu/service/data/EST/B.EU000A2X2A25.WT?format=csvdata",
+      "path": "2026-11-14/ecb/EST_B.EU000A2X2A25.WT.csv",
+      "retrieved_at_utc": "2026-11-14T17:31:43+00:00",
+      "role": "rate:estr",
+      "sha256": "17070a1ec4735934e923c7d204784fea914ee0d2248bdc31f00f87397c6359e7"
+    }
+  ],
+  "parameters": {
+    "annualisation_vol": 252,
+    "drift_threshold": 0.25,
+    "sma_sessions": 200,
+    "vol_sessions": 60,
+    "vol_target": 0.1
+  },
+  "partitions": {
+    "development": {
+      "end": "2019-12-31",
+      "start": "2009-10-08"
+    },
+    "sealed": {
+      "end": "2026-11-13",
+      "start": "2023-06-01"
+    },
+    "validation": {
+      "end": "2023-05-31",
+      "start": "2020-01-02"
+    }
+  },
+  "schema": "trend-manifest/1",
+  "snapshot": "2026-11-14",
+  "unit_anchors": {
+    "COMMOD": {
+      "close_eur": 4.526500225,
+      "date": "2018-05-03",
+      "symbol": "SXRS.DE",
+      "unit_scale": 5.5039406859055875
+    },
+    "EM_EQ": {
+      "close_eur": 24.98999977,
+      "date": "2009-10-08",
+      "symbol": "IQQE.DE",
+      "unit_scale": 24.98999977
+    },
+    "EUROPE_EQ": {
+      "close_eur": 24.64999962,
+      "date": "2009-10-08",
+      "symbol": "EXSA.DE",
+      "unit_scale": 24.64999962
+    },
+    "EUR_IG": {
+      "close_eur": 120.0999985,
+      "date": "2009-10-08",
+      "symbol": "IBCS.DE",
+      "unit_scale": 120.0999985
+    },
+    "EZ_GOV": {
+      "close_eur": 165.7700043,
+      "date": "2009-10-08",
+      "symbol": "XGLE.DE",
+      "unit_scale": 165.7700043
+    },
+    "GLOBAL_EQ": {
+      "close_eur": 21.37000084,
+      "date": "2011-10-21",
+      "symbol": "IUSQ.DE",
+      "unit_scale": 18.438247418870176
+    },
+    "GLOBAL_RE": {
+      "close_eur": 10.89999962,
+      "date": "2009-10-08",
+      "symbol": "IQQ6.DE",
+      "unit_scale": 10.89999962
+    },
+    "GOLD": {
+      "close_eur": 104.4119034,
+      "date": "2009-10-08",
+      "symbol": "8PSG.DE",
+      "unit_scale": 104.4119034
+    },
+    "JAPAN_EQ": {
+      "close_eur": 6.739999771,
+      "date": "2009-10-08",
+      "symbol": "IQQJ.DE",
+      "unit_scale": 6.739999771
+    },
+    "PACXJ_EQ": {
+      "close_eur": 91.58000183,
+      "date": "2010-05-04",
+      "symbol": "SXR1.DE",
+      "unit_scale": 81.40122114415372
+    },
+    "US_EQ": {
+      "close_eur": 92.66999817,
+      "date": "2010-05-19",
+      "symbol": "SXR8.DE",
+      "unit_scale": 72.76843602295706
+    },
+    "US_TSY": {
+      "close_eur": 116.8700027,
+      "date": "2009-10-08",
+      "symbol": "IUSM.DE",
+      "unit_scale": 116.8700027
+    }
+  },
+  "universe_sha256": "5a4710bc6bff8fc4c43be8f083429ba2158b08c2ddd31565d68f69945a0a5397",
+  "window": {
+    "binding_asset": "GLOBAL_RE",
+    "data_end": "2026-11-13",
+    "evaluable_start": "2009-10-08",
+    "warmup_end": {
+      "COMMOD": "2007-08-16",
+      "EM_EQ": "2008-10-13",
+      "EUROPE_EQ": "2008-10-10",
+      "EUR_IG": "2008-10-13",
+      "EZ_GOV": "2008-10-10",
+      "GLOBAL_RE": "2009-10-08",
+      "GOLD": "2005-09-02",
+      "JAPAN_EQ": "2008-10-10",
+      "PACXJ_EQ": "2002-08-13",
+      "US_EQ": "1993-11-11",
+      "US_TSY": "2003-05-14"
+    },
+    "years": 17.098
+  }
+}
